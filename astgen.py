@@ -60,16 +60,31 @@ class Block:
         
         return None if self.parent == None else self.parent.get_variable_info(var_name)
 
-class ExpressionAtom:
+class ExpressionConstant:
     def __init__(self, scope, tok):
         self.token = tok
         
         if tok.type == Token.TYPE_NUMBER:
             self.type = ValueType(ValueType.NUMBER)
+            self.value = float(tok.value)
+        
         elif tok.type == Token.TYPE_STRING:
             self.type = ValueType(ValueType.STRING)
-        elif tok.type == Token.TYPE_IDENTIFIER:
-            self.type = scope.get_variable_info(tok.value).type
+            self.value = tok.value
+        
+        elif tok.is_keyword('true'):
+            self.type = ValueType(ValueType.BOOL)
+            self.value = True
+        
+        elif tok.is_keyword('false'):
+            self.type = ValueType(ValueType.BOOL)
+            self.value = False
+        
+        else:
+            raise Exception("internal: could not get type of token for ExpressionConstant")
+    
+    def __str__(self):
+        return f"const<{self.type}>({str(self.value)})"
     
 class BinaryOperator:
     def __init__(self, op, type, a, b):
@@ -79,7 +94,7 @@ class BinaryOperator:
         self.right = b
     
     def __str__(self):
-        return f'{(self.op)}({str(self.left)}, {str(self.right)})'
+        return f'{(self.op)}<{self.type}>({str(self.left)}, {str(self.right)})'
 
 class UnaryOperator:
     def __init__(self, op, type, expr):
@@ -88,7 +103,7 @@ class UnaryOperator:
         self.expr = expr
     
     def __str__(self):
-        return f'{(self.op)}({str(self.expr)})'
+        return f'{(self.op)}<{self.type}>({str(self.expr)})'
 
 class IdentifierOperator:
     def __init__(self, op, type, id, data=None):
@@ -98,7 +113,7 @@ class IdentifierOperator:
         self.data = data
     
     def __str__(self):
-        return f'{(self.type)}(<{self.id}>, {str(self.data)})'
+        return f'{(self.op)}<{self.type}>(<{self.id}>, {str(self.data)})'
 
 class Function:
     def __init__(self, name, type, definition, attribs):
@@ -115,6 +130,39 @@ COMPARISON_SYMBOL_NAMES = ['op_lt', 'op_gt', 'op_lte', 'op_gte', 'op_neq', 'op_e
 
 ARITHMETIC_SYMBOLS = ['+', '-', '*', '/']
 ARITHMETIC_SYMBOLS_NAMES = ['op_add', 'op_sub', 'op_mul', 'op_div']
+
+# assumes the identifier token was popped off, leaving the
+# token queue on the opening parenthesis
+def parse_function_call(program, tokens, block, id_token):
+    tokens.pop() # pop opening parenthesis
+    func_name = id_token.value
+    
+    if not (func_name in program['functions']):
+        if block.get_variable_info(func_name):
+            raise CompilationException.from_token(id_token, f"'{func_name}' is not a function")
+        else:
+            raise CompilationException.from_token(id_token, f"'{func_name}' is not a defined function")
+
+    func_data = program['functions'][func_name]
+    func_args = []
+
+    # read function arguments
+    # TODO: type-check with function arguments
+    while True:
+        next_tok = tokens.peek()
+        if next_tok.is_symbol(')'):
+            tokens.pop()
+            break
+
+        if len(func_args) >= 0: # 0 = number of function arguments
+            raise CompilationException.from_token(id_token, f"too many function arguments for '{func_name}")
+    
+        func_args.append(parse_expression(program, tokens, block))
+    
+    return {
+        'function': func_data,
+        'args': func_args
+    }
 
 def parse_expression(program, tokens, block, order=0):
     # TODO:
@@ -179,31 +227,40 @@ def parse_expression(program, tokens, block, order=0):
             tokens.pop()
 
             id_op = tokens.peek()
+            var_info = block.get_variable_info(tok.value)
 
-            # TODO: function calls
             if id_op.is_symbol('('):
-                raise Exception("function calls not yet supported")
-            
-            # TODO: arrays
-            elif id_op.is_symbol('['):
-                raise Exception("arrays not yet supported")
-        
-            # TODO: structs
-            elif id_op.is_symbol('.'):
-                raise Exception("struct indexing not yet supported")
+                # here, a function is required
+                if var_info != None:
+                    raise CompilationException.from_token(id_op, "attempt to perform a function call on a variable")
+                
+                func_call_data = parse_function_call(program, tokens, block, tok)
+                func_data = func_call_data['function']
+                func_args = func_call_data['args']
 
-            elif id_op.is_symbol('->'):
-                raise Exception("pointer indirection not yet supported")
-
+                return IdentifierOperator('func_call', func_data.type, tok.value, func_args)
             else:
-                var_info = block.get_variable_info(tok.value)
+                # here, a variable is required
                 if var_info == None:
                     raise Exception(f"use of undeclared identifier '{(tok.value)}'")
-                return IdentifierOperator('var_get', var_info['type'], var_info['name'])
+                
+                # TODO: arrays
+                if id_op.is_symbol('['):
+                    raise Exception("arrays not yet supported")
+            
+                # TODO: structs
+                elif id_op.is_symbol('.'):
+                    raise Exception("struct indexing not yet supported")
+
+                elif id_op.is_symbol('->'):
+                    raise Exception("pointer indirection not yet supported")
+
+                else:
+                    return IdentifierOperator('var_get', var_info['type'], var_info['name'])
         
         elif tok.type == Token.TYPE_STRING or tok.type == Token.TYPE_NUMBER:
             tokens.pop()
-            return ExpressionAtom(block, tok)
+            return ExpressionConstant(block, tok)
     
     raise Exception('parse_expression: unreachable code')
 
@@ -262,7 +319,7 @@ def parse_block(program, tokens, parent_block=None):
                     'var_type': var_type,
                     'init': expr
                 }
-                print(expr)
+                print("EXPR: " + str(expr))
             
             # variable declaration without initial assignment
             else:
@@ -275,6 +332,17 @@ def parse_block(program, tokens, parent_block=None):
             
             block.declare_variable(var_name, var_type)
             block.statements.append(statement)
+        
+        # function call
+        # since there is no expression-as-statement functionality (partly due to the lack of semicolons)
+        # function call statements have to be specifically programmed
+        elif tok.type == Token.TYPE_IDENTIFIER:
+            func_call_data = parse_function_call(program, tokens, block, tok)
+            block.statements.append({
+                'type': 'func_call',
+                'func_name': func_call_data['function'].name,
+                'args': func_call_data['args']
+            })
         
         else:
             raise CompilationException.from_token(tok, "unexpected " + str(tok))
