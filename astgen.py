@@ -1,4 +1,5 @@
 from lexer import Token
+from compileerror import CompilationException
 
 class Block:
     def __init__(self, parent=None):
@@ -44,7 +45,17 @@ class IdentifierOperator:
     
     def __str__(self):
         return f'{(self.type)}(<{self.id}>, {str(self.data)})'
-    
+
+class Function:
+    def __init__(self, name, type, definition, attribs):
+        self.name = name
+        self.type = type
+        self.definition = definition
+        self.attributes = attribs
+
+ATTRIBUTES = ['warp']
+EVENT_NAMES = ['flag', 'keypress']
+
 COMPARISON_SYMBOLS = ['<', '>', '<=', '>=', '!=', '==']
 COMPARISON_SYMBOL_NAMES = ['op_lt', 'op_gt', 'op_lte', 'op_gte', 'op_neq', 'op_eq']
 
@@ -178,26 +189,22 @@ def parse_block(program, tokens, parent_block=None):
             block.statements.append(statement)
         
         else:
-            raise Exception("unexpected " + str(tok))
+            raise CompilationException.from_token(tok, "unexpected " + str(tok))
 
     return block
 
-class Function:
-    def __init__(self, name, type, definition):
-        self.name = name
-        self.type = type
-        self.definition = definition
-
-def parse_function(program, tokens, name, func_type):
+def parse_function(program, tokens, name, func_type, attribs):
     block = parse_block(program, tokens)
-    return Function(name, func_type, block)
+    return Function(name, func_type, block, attribs[:])
 
 def parse_program(tokens):
     program = {}
     program['costumes'] = []
     program['sounds'] = []
     program['functions'] = {}
-    program['events'] = {}
+    program['events'] = []
+
+    attributes = []
 
     while tokens:
         tok = tokens.pop()
@@ -205,6 +212,9 @@ def parse_program(tokens):
         # costumes
         # syntax: costume <str1> [, [...]]
         if tok.is_keyword('costume'):
+            if attributes:
+                raise CompilationException.from_token(tok, "costume declaration does not take attributes")
+            
             asset_name = tokens.pop()
             assert(asset_name.type == Token.TYPE_STRING)
             program['costumes'].append(asset_name.value)
@@ -212,40 +222,58 @@ def parse_program(tokens):
         # sounds
         # syntax similar to costumes
         elif tok.is_keyword('sound'):
+            if attributes:
+                raise CompilationException.from_token(tok, "sound declaration does not take attributes")
+            
             asset_name = tokens.pop()
             assert(asset_name.type == Token.TYPE_STRING)
             program['sounds'].append(asset_name.value)
         
-        # events
-        # syntax: on <event_name>: <func1> [, [...]]
-        elif tok.is_keyword('on'):
-            event_name = tokens.pop().get_identifier()
-            assert(event_name in Token.EVENT_NAMES)
-            assert(tokens.pop().is_symbol(':'))
-
-            if not event_name in program['events']:
-                program['events'][event_name] = []
-            event_targets = program['events'][event_name]
-
-            fname = tokens.pop().get_identifier()
-            assert(fname in program['functions'])
-
-            if not fname in event_targets:
-                event_targets.append(fname)
-
-            program['events'][event_name] = event_targets
-        
         # function definition
         elif tok.is_keyword('func'):
-            func_name = tokens.pop().get_identifier()
-            assert(not func_name in program['functions'])
+            tok = tokens.pop()
+            func_name = tok.get_identifier()
+            if func_name in program['functions']:
+                raise CompilationException.from_token(tok, f"function '{func_name}' already defined")
+            
             assert(tokens.pop().is_symbol('('))
             assert(tokens.pop().is_symbol(')'))
             assert(tokens.pop().is_symbol(':'))
+
             func_type = tokens.pop()
             assert(func_type.type == Token.TYPE_KEYWORD and func_type.value in Token.KEYWORD_TYPES)
 
-            program['functions'][func_name] = parse_function(program, tokens, func_name, func_type.value)
+            program['functions'][func_name] = parse_function(
+                program, tokens,
+                name=func_name, func_type=func_type.value, attribs=attributes)
+
+            attributes.clear()
+        
+        # event handler
+        elif tok.is_keyword('on'):
+            tok = tokens.pop()
+            event_name = tok.get_identifier()
+            if not event_name in EVENT_NAMES:
+                raise CompilationException.from_token(tok, f"invalid event '{event_name}'")
+            
+            program['events'].append({
+                'event_name': event_name,
+                'definition': parse_block(program, tokens),
+                'attributes': attributes[:]
+            })
+            attributes.clear()
+        
+        elif tok.is_symbol('@'):
+            tok = tokens.pop()
+            attr_name = tok.get_identifier()
+
+            if not attr_name in ATTRIBUTES:
+                raise CompilationException.from_token(tok, f"unknown attribute '{attr_name}'")
+
+            if attr_name in attributes:
+                raise CompilationException.from_token(tok, "same attribute defined more than once")
+
+            attributes.append(attr_name)
         
         else:
             raise Exception("unexpected " + str(tok))

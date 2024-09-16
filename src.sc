@@ -12,8 +12,7 @@
 # 
 # if str == "c": say_wait("single-line if")
 
-costume "costume.png"
-sound "ufo-hit.wav"
+costume "alien-in-suit.png"
 
 func main(): void
     var somevar: number = 3
@@ -21,4 +20,6 @@ func main(): void
     var my_other_var: string = "Hello, world!"
 end
 
-on flag: main
+on flag
+    var x: number = 2
+end

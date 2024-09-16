@@ -1,3 +1,5 @@
+from compileerror import CompilationException
+
 class Token:
     TYPE_KEYWORD = 0
     TYPE_SYMBOL = 1 
@@ -8,9 +10,11 @@ class Token:
     KEYWORD_TYPES = ['void', 'string', 'number']
     EVENT_NAMES = ['flag', 'keypress', 'click', 'broadcast']
     
-    def __init__(self, token_type, value):
+    def __init__(self, lineno, linecol, token_type, value):
         self.type = token_type
         self.value = value
+        self.lineno = lineno
+        self.linecol = linecol
     
     def __str__(self):
         if self.type == Token.TYPE_KEYWORD:
@@ -24,7 +28,7 @@ class Token:
         elif self.type == Token.TYPE_STRING:
             return "string"
         else:
-            raise Exception("unknown token type")
+            raise CompilationException.from_token(self, "INTERNAL: unknown token type")
             
         return f"{kw_str} '{(self.value)}'"
     
@@ -36,7 +40,7 @@ class Token:
     
     def get_identifier(self):
         if self.type != Token.TYPE_IDENTIFIER:
-            raise Exception('expected identifier')
+            raise CompilationException.from_token(self, "expected identifier")
         return self.value
 
 class TokenQueue:
@@ -69,9 +73,8 @@ def parse_tokens(file_path):
     ]
 
     SYMBOLS = [
-        ';',
+        '@', ';', ':', ',', '"', '\'',
         '{', '}', '(', ')', '[', ']',
-        ':', ',', '"', '\'',
         '=',
 
         # operators
@@ -88,10 +91,21 @@ def parse_tokens(file_path):
         line_begin = True
         is_number = False
 
-        while True:
+        lineno = 1
+        linecol = 0
+
+        # line number information for potential error messages
+        token_lineno = 0
+        token_linecol = 0
+
+        eof = False
+        while not eof:
             char = file.read(1)
             if not char:
-                break
+                eof = True
+                char = '\n'
+
+            linecol += 1
             
             is_symbol = char in SYMBOLS
             if is_symbol or char.isspace() or char == '#':
@@ -99,23 +113,28 @@ def parse_tokens(file_path):
                     word = ''.join(str_buf)
 
                     if is_number:
-                        tokens.append(Token(Token.TYPE_NUMBER, word))
+                        tokens.append(Token(lineno, linecol, Token.TYPE_NUMBER, word))
                         # print("NUMBER: " + word)
                     elif word in KEYWORDS:
-                        tokens.append(Token(Token.TYPE_KEYWORD, word))
+                        tokens.append(Token(lineno, linecol, Token.TYPE_KEYWORD, word))
                         # print("KEYWORD: " + word)
                     else:
-                        tokens.append(Token(Token.TYPE_IDENTIFIER, word))
+                        tokens.append(Token(lineno, linecol, Token.TYPE_IDENTIFIER, word))
                         # print("IDENTIFIER: " + word)
                     
                     str_buf.clear()
                 
                 # read entirety of string
                 if char == '"' or char == '\'':
+                    # for error handling
+                    token_lineno = lineno
+                    token_linecol = linecol
+
                     while True:
                         char = file.read(1)
+                        linecol += 1
                         if not char:
-                            raise Exception("unterminated string")
+                            raise CompilationException(token_lineno, token_linecol, "unterminated string")
                         
                         # escape sequence
                         if char == '\\':
@@ -132,12 +151,12 @@ def parse_tokens(file_path):
                             elif char == '\'':
                                 str_buf.append('\'')
                             else:
-                                raise Exception("invalid escape sequence '\\" + char + "'")
+                                raise CompilationException(lineno, linecol, "invalid escape sequence '\\" + char + "'")
                         
                         # end of string
                         elif char == '"' or char == '\'':
                             word = ''.join(str_buf)
-                            tokens.append(Token(Token.TYPE_STRING, word))
+                            tokens.append(Token(lineno, linecol, Token.TYPE_STRING, word))
                             # print("STRING: \"" + word + "\"")
                             str_buf.clear()
                             break
@@ -145,27 +164,39 @@ def parse_tokens(file_path):
                         # normal character
                         else:
                             str_buf.append(char)
+                        
+                        if char == '\n':
+                            lineno += 1
+                            line_col = 0
                 
                 elif is_symbol:
-                    tokens.append(Token(Token.TYPE_SYMBOL, char))
+                    tokens.append(Token(lineno, linecol, Token.TYPE_SYMBOL, char))
                     # print("SYMBOL: " + char)
             else:
                 # determine if word is text or number at the start
                 if not str_buf:
                     is_number = char in NUMERIC_CHARS
+                    token_lineno = lineno
+                    token_linecol = linecol
                 
                 if is_number and not char in NUMERIC_CHARS:
-                    raise Exception(f"unexpected char {char} in number")
+                    raise CompilationException(lineno, linecol, f"unexpected char {char} in number")
                 elif not is_number and not char in WORD_CHARS:
-                    raise Exception(f"unexpected char {char} in keyword/identifier")
+                    raise CompilationException(lineno, linecol, f"unexpected char {char} in keyword/identifier")
                 
                 str_buf.append(char)
 
             # special characters    
             if char == '\n': # newline
                 line_begin = True
+                lineno += 1
+                linecol = 0
+            
             elif char == '#': # comment
                 while char and char != '\n':
                     char = file.read(1)
+                
+                lineno += 1
+                linecol = 0
     
     return tokens
