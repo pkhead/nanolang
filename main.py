@@ -9,9 +9,29 @@ KEYWORDS = [
     'on', 'flag', 'keypress', 'click', 'broadcast'
 ]
 
-SYMBOLS = [';', '{', '}', '(', ')', '[', ']', ':', ',', '"', '\'', '=']
+SYMBOLS = [
+    ';',
+    '{', '}', '(', ')', '[', ']',
+    ':', ',', '"', '\'',
+    '=',
+
+    # operators
+    '+', '-', '*', '/', '..'
+]
+
 NUMERIC_CHARS = ['.', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
 WORD_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890_"
+
+TOKEN_KEYWORD = 0
+TOKEN_SYMBOL = 1 
+TOKEN_IDENTIFIER = 2
+TOKEN_NUMBER = 3
+TOKEN_STRING = 4
+
+class Token:
+    def __init__(self, token_type, value):
+        self.type = token_type
+        self.value = value
 
 def parse_tokens(file_path):
     tokens = []
@@ -32,11 +52,14 @@ def parse_tokens(file_path):
                     word = ''.join(str_buf)
 
                     if is_number:
-                        print("NUMBER: " + word)
+                        tokens.append(Token(TOKEN_NUMBER, word))
+                        # print("NUMBER: " + word)
                     elif word in KEYWORDS:
-                        print("KEYWORD: " + word)
+                        tokens.append(Token(TOKEN_KEYWORD, word))
+                        # print("KEYWORD: " + word)
                     else:
-                        print("IDENTIFIER: " + word)
+                        tokens.append(Token(TOKEN_IDENTIFIER, word))
+                        # print("IDENTIFIER: " + word)
                     
                     str_buf.clear()
                 
@@ -47,9 +70,28 @@ def parse_tokens(file_path):
                         if not char:
                             raise Exception("unterminated string")
                         
+                        # escape sequence
+                        if char == '\\':
+                            char = file.read(1)
+                            
+                            if char == 'n':
+                                str_buf.append('\n')
+                            elif char == 't':
+                                str_buf.append('\t')
+                            elif char == 'r':
+                                str_buf.append('\r')
+                            elif char == '"':
+                                str_buf.append('\"')
+                            elif char == '\'':
+                                str_buf.append('\'')
+                            else:
+                                raise Exception("invalid escape sequence '\\" + char + "'")
+                        
                         # end of string
-                        if char == '"' or char == '\'':
-                            print("STRING: \"" + ''.join(str_buf) + "\"")
+                        elif char == '"' or char == '\'':
+                            word = ''.join(str_buf)
+                            tokens.append(Token(TOKEN_STRING, word))
+                            # print("STRING: \"" + word + "\"")
                             str_buf.clear()
                             break
                         
@@ -58,7 +100,8 @@ def parse_tokens(file_path):
                             str_buf.append(char)
                 
                 elif is_symbol:
-                    print("SYMBOL: " + char)
+                    tokens.append(Token(TOKEN_SYMBOL, char))
+                    # print("SYMBOL: " + char)
             else:
                 # determine if word is text or number at the start
                 if not str_buf:
@@ -82,3 +125,18 @@ def parse_tokens(file_path):
 
 if __name__ == '__main__':
     tokens = parse_tokens('src.sc')
+    for tok in tokens:
+        if tok.type == TOKEN_KEYWORD:
+            tokstr = 'KEYWORD'
+        elif tok.type == TOKEN_SYMBOL:
+            tokstr = 'SYMBOL'
+        elif tok.type == TOKEN_IDENTIFIER:
+            tokstr = 'IDENTIFIER'
+        elif tok.type == TOKEN_NUMBER:
+            tokstr = 'NUMBER'
+        elif tok.type == TOKEN_STRING:
+            tokstr = 'STRING'
+        else:
+            tokstr = '[ERROR]'
+        
+        print(f"{tokstr}: {(tok.value)}")
