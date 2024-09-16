@@ -16,7 +16,8 @@ costume "costume.png"
 sound "ufo-hit.wav"
 
 func main(): void
-    var my_var: number = 3
+    var somevar: number = 3
+    var my_var: number = 3 * somevar + 3
     var my_other_var: string = "Hello, world!"
 end
 
