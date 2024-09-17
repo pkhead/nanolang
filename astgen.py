@@ -61,8 +61,9 @@ class Block:
         return None if self.parent == None else self.parent.get_variable_info(var_name)
 
 class ExpressionConstant:
-    def __init__(self, scope, tok):
+    def __init__(self, tok):
         self.token = tok
+        self.op = 'const'
         
         if tok.type == Token.TYPE_NUMBER:
             self.type = ValueType(ValueType.NUMBER)
@@ -122,7 +123,7 @@ class Function:
         self.definition = definition
         self.attributes = attribs
 
-ATTRIBUTES = ['warp']
+ATTRIBUTES = ['nowarp']
 EVENT_NAMES = ['flag', 'keypress']
 
 COMPARISON_SYMBOLS = ['<', '>', '<=', '>=', '!=', '==']
@@ -260,7 +261,7 @@ def parse_expression(program, tokens, block, order=0):
         
         elif tok.type == Token.TYPE_STRING or tok.type == Token.TYPE_NUMBER:
             tokens.pop()
-            return ExpressionConstant(block, tok)
+            return ExpressionConstant(tok)
     
     raise Exception('parse_expression: unreachable code')
 

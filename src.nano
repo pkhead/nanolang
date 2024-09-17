@@ -1,0 +1,50 @@
+# there are three primitive types:
+#   string
+#   number
+#   bool (implemented with number, where nonzero == true)
+
+# == function example ==
+# func fib(n: number): number
+#     if n == 0 || n == 1
+#         return n
+#     else
+#         return fib(n-1) + fib(n-2)
+#     end
+# end
+
+# == examples of built-in functions: (none of which are currently implemented) ==
+# say("Hello, world!")
+# say_wait("Hello, world!", 2)
+# create_clone()
+# create_clone_of("myself")
+
+# == control flow (barely implemented) ==
+# if condition
+#   do_stuff()
+# elif condition2
+#   do_more_stuff()
+# end
+#
+# if condition: single_line_if()
+#
+# (no repeat until, because repeat until = while not)
+# (and I'm lazy)
+# while condition
+#  do_stuff()
+# end
+#
+# for i in 1..5 # 1 and 4 are both included
+#   say_wait(tostring(i), 2)
+# end 
+#
+# var i: number = 1
+# repeat 5
+#   say_wait("iteration " & tostring(i), 2)
+#   i += 1
+# end
+
+costume "alien-in-suit.png"
+
+on flag
+    var x: number = 3 * (5 + 2)
+end

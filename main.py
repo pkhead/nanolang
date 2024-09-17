@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # TODO: replace all assert calls with a proper exception throw
 
 from lexer import parse_tokens, TokenQueue
@@ -5,7 +6,7 @@ from astgen import parse_program
 from gbgen import generate_program
 
 if __name__ == '__main__':
-    tokens = TokenQueue(parse_tokens('src.sc'))
+    tokens = TokenQueue(parse_tokens('src.nano'))
     program = parse_program(tokens)
     # print(program)
 
