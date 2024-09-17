@@ -49,11 +49,11 @@ costume "alien-in-suit.png"
 #     return a + b
 # end
 
-func add(): number
-    return 3
+func some_string(): string
+    return "Who are you?"
 end
 
 @nowarp
 on flag
-    var x: number = add()
+    sprite_say_wait(ask(some_string()), 2)
 end

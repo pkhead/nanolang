@@ -1,7 +1,9 @@
 # Goboscript generator
-from lexer import Token
-from astgen import ValueType, BinaryOperator
 import re
+from lexer import Token
+from compilertypes import ValueType
+from astgen import BinaryOperator
+from builtin_methods import BUILTIN_METHODS
 
 # == STACK MECHANISM ==
 # nano will use a stack to store the values of variables.
@@ -260,6 +262,27 @@ def generate_expression(ctx, expr, stack):
         generate_func_call(ctx, ctx.sprite_ctx.program['functions'][expr.id], expr.data)
         return "@<" + str(stack.push()) + ">"
 
+    elif expr.op == 'builtin_func_call':
+        func_data = BUILTIN_METHODS[expr.id]
+
+        expr_stack = ExpressionStack()
+        arg_exprs = []
+        
+        for arg in expr.data:
+            arg_exprs.append(generate_expression(ctx, arg, expr_stack))
+        
+        file = ctx.sprite_ctx.file
+        out_expr = func_data.generate([expr_stack.finalize_stack_references(x) for x in arg_exprs])
+
+        if func_data.generate_return != None:
+            file.write(out_expr + '\n')
+            expr_stack.clear(file)
+            file.write(macro_stack_push(func_data.generate_return()) + '\n')
+            return "@<" + str(stack.push()) + ">"
+        else:
+            expr_stack.clear(file)
+            return out_expr
+
     elif isinstance(expr, BinaryOperator):
         val_a = generate_expression(ctx, expr.left, stack)
         val_b = generate_expression(ctx, expr.right, stack)
@@ -337,6 +360,20 @@ def generate_block(ctx, block):
             if not func_data.type.is_void():
                 file.write(macro_stack_pop(gs_literal(func_data.type.size())))
         
+        # opcode builtin_func_call
+        elif statement['type'] == 'builtin_func_call':
+            func_data = BUILTIN_METHODS[statement['func_name']]
+
+            expr_stack = ExpressionStack()
+            arg_exprs = []
+            
+            for arg in statement['args']:
+                arg_exprs.append(generate_expression(ctx, arg, expr_stack))
+            
+            file.write(func_data.generate([expr_stack.finalize_stack_references(x) for x in arg_exprs]) + "\n")
+            expr_stack.clear(file)
+        
+        # opcode return
         elif statement['type'] == 'return':
             did_return = True
 
