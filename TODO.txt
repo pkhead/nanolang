@@ -1,0 +1,5 @@
+- function arguments
+- implement return values
+- sprite_say, sprite_say_wait
+- variable type inference
+- control flow

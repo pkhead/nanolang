@@ -45,6 +45,22 @@
 
 costume "alien-in-suit.png"
 
+func a(): number
+
+end
+
+func b(): number
+
+end
+
+func test(): void
+    
+end
+
 on flag
-    var x: number = 3 * (5 + 2)
+    # var return_test: number = test() * a(b() + 3)
+    test()
+    # var a: number = 3 * (5 + 2)
+    # var str: string = "Hello, world!"
+    # var b: string = str
 end
