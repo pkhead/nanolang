@@ -62,6 +62,12 @@ def gs_literal(value):
         out.append('"')
         return ''.join(out)
     
+    elif value == True:
+        return "1"
+    
+    elif value == False:
+        return "0"
+    
     else:
         return str(value)
 
@@ -209,6 +215,15 @@ class FunctionContext:
             if v['name'] == var_name:
                 return v['offset']
 
+class Scope:
+    def __init__(self):
+        self.declared_variables = []
+        self.size = 0
+    
+    def declare_variable(self, var_name, var_size):
+        self.declared_variables.append(var_name)
+        self.size += var_size
+
 class ExpressionStack:
     def __init__(self):
         self.stack_size = 0
@@ -290,6 +305,10 @@ def generate_expression(ctx, expr, stack):
             return f"(({value}) & \"\")"
         else:
             return f"(({value}) + 0)"
+    
+    elif expr.op == 'op_neg':
+        value = generate_expression(ctx, expr.expr, stack)
+        return f"-({value})"
 
     elif isinstance(expr, BinaryOperator):
         val_a = generate_expression(ctx, expr.left, stack)
@@ -305,7 +324,7 @@ def generate_expression(ctx, expr, stack):
             return f"({val_a} * {val_b})"
         
         elif expr.op == 'op_div':
-            return f"({val_a} / {val_b})"
+            return f"({val_a} / {val_b})"        
         
         elif expr.op == 'op_join':
             return f"({val_a} & {val_b})"
@@ -316,7 +335,7 @@ def generate_expression(ctx, expr, stack):
     else:
         raise Exception('unknown opcode ' + expr.op)
 
-def push_expression_result(ctx, expr):
+def push_expression_result(ctx, expr, to_temp=False):
     file = ctx.sprite_ctx.file
 
     expr_stack = ExpressionStack()
@@ -327,46 +346,81 @@ def push_expression_result(ctx, expr):
     if expr_stack.stack_size > 0:
         file.write(f"temp = {expr};\n")
         expr_stack.clear(file)
-        file.write(macro_stack_push("temp") + "\n")
+
+        if not to_temp:
+            file.write(macro_stack_push("temp") + "\n")
     else:
-        file.write(macro_stack_push(expr) + "\n")
+        if to_temp:
+            file.write(f"temp = {expr};\n")
+        else:
+            file.write(macro_stack_push(expr) + "\n")
 
-# assumes that there is a argument named stack_id
-def generate_block(ctx, block):
+def generate_statement(ctx, statement, scope):
     file = ctx.sprite_ctx.file
+    opcode = statement['type']
 
-    file.write("# block start\n")
+    # opcode var_declare
+    if opcode == 'var_declare':
+        var_name = statement['var_name']
+        scope.declare_variable(var_name, 1)
+        ctx.new_variable(var_name, 1)
 
-    # parse statement
-    scope_size = 0
-    declared_variables = []
-    did_return = False
+        file.write(f'# {var_name} declaration \n')
 
-    for statement in block.statements:
-        print(statement['type'])
+        # write initialization expression if present
+        if statement['init'] != None:
+            push_expression_result(ctx, statement['init'])
+        
+        # no initialization expression; initialize to an empty string
+        else:
+            file.write(macro_stack_push('\"\"') + "\n")
+        
+    # opcode var_assign
+    elif opcode == 'var_assign':
+        var_name = statement['var_name']
+        write_offset = ctx.get_variable_offset(var_name)
+        
+        expr_stack = ExpressionStack()
+        expr = expr_stack.finalize_stack_references(generate_expression(ctx, statement['value'], expr_stack))
 
-        # opcode var_declare
-        if statement['type'] == 'var_declare':
-            var_name = statement['var_name']
-            declared_variables.append(var_name)
-            ctx.new_variable(var_name, 1)
-            scope_size += 1
+        # set variable to expression result and clear
+        # values added to the stack by the expression (if present)
+        if expr_stack.stack_size > 0:
+            file.write(f"temp = {expr};\n")
+            expr_stack.clear(file)
+            file.write(macro_set_from_stack_base(write_offset, "temp") + "\n")
+        else:
+            file.write(macro_set_from_stack_base(write_offset, expr) + "\n")
+    
+    # opcode func_call
+    elif opcode == 'func_call':
+        func_data = ctx.sprite_ctx.program['functions'][statement['func_name']]
+        generate_func_call(ctx, func_data)
 
-            file.write(f'# {var_name} declaration \n')
+        # drop return value if it exists
+        if not func_data.type.is_void():
+            file.write(macro_stack_pop(gs_literal(func_data.type.size())))
+    
+    # opcode builtin_func_call
+    elif opcode == 'builtin_func_call':
+        func_data = BUILTIN_METHODS[statement['func_name']]
 
-            # write initialization expression if present
-            if statement['init'] != None:
-                push_expression_result(ctx, statement['init'])
-            
-            # no initialization expression; initialize to an empty string
-            else:
-                file.write(macro_stack_push('\"\"') + "\n")
-            
-        # opcode var_assign
-        if statement['type'] == 'var_assign':
-            var_name = statement['var_name']
-            write_offset = ctx.get_variable_offset(var_name)
-            
+        expr_stack = ExpressionStack()
+        arg_exprs = []
+        
+        for arg in statement['args']:
+            arg_exprs.append(generate_expression(ctx, arg, expr_stack))
+        
+        file.write(func_data.generate([expr_stack.finalize_stack_references(x) for x in arg_exprs]) + "\n")
+        expr_stack.clear(file)
+    
+    # opcode return
+    elif opcode == 'return':
+        did_return = True
+
+        file.write("# return\n")
+
+        if statement['value']:
             expr_stack = ExpressionStack()
             expr = expr_stack.finalize_stack_references(generate_expression(ctx, statement['value'], expr_stack))
 
@@ -375,65 +429,61 @@ def generate_block(ctx, block):
             if expr_stack.stack_size > 0:
                 file.write(f"temp = {expr};\n")
                 expr_stack.clear(file)
-                file.write(macro_set_from_stack_base(write_offset, "temp") + "\n")
+                file.write(macro_set_from_stack_base(ctx.return_offset, "temp") + "\n")
             else:
-                file.write(macro_set_from_stack_base(write_offset, expr) + "\n")
-        
-        # opcode func_call
-        elif statement['type'] == 'func_call':
-            func_data = ctx.sprite_ctx.program['functions'][statement['func_name']]
-            generate_func_call(ctx, func_data)
+                file.write(macro_set_from_stack_base(ctx.return_offset, expr) + "\n")
 
-            # drop return value if it exists
-            if not func_data.type.is_void():
-                file.write(macro_stack_pop(gs_literal(func_data.type.size())))
+        # free all variables
+        total_stack_size = 0
+        for var in ctx.active_variables:
+            total_stack_size += var['size']
         
-        # opcode builtin_func_call
-        elif statement['type'] == 'builtin_func_call':
-            func_data = BUILTIN_METHODS[statement['func_name']]
+        file.write(macro_stack_pop(total_stack_size))
+    
+    # opcode if
+    elif opcode == 'if':
+        push_expression_result(ctx, statement['cond'], True)
+        file.write("if temp != 0 {\n")
 
-            expr_stack = ExpressionStack()
-            arg_exprs = []
-            
-            for arg in statement['args']:
-                arg_exprs.append(generate_expression(ctx, arg, expr_stack))
-            
-            file.write(func_data.generate([expr_stack.finalize_stack_references(x) for x in arg_exprs]) + "\n")
-            expr_stack.clear(file)
-        
-        # opcode return
-        elif statement['type'] == 'return':
+        branch = statement['branch']
+        if branch['single']: generate_statement(ctx, branch['branch'], scope)
+        else: generate_block(ctx, branch['branch'])
+
+        if (statement['else_branch']):
+            file.write("} else {\n")
+
+            branch = statement['else_branch']
+            if branch['single']: generate_statement(ctx, branch['branch'], scope)
+            else: generate_block(ctx, branch['branch'])
+
+        file.write("}\n")
+    
+    else:
+        raise Exception("unknown statement opcode " + opcode)
+
+# assumes that there is a argument named stack_id
+def generate_block(ctx, block):
+    file = ctx.sprite_ctx.file
+
+    file.write("# block start\n")
+
+    # parse statement
+    scope = Scope()
+    did_return = False
+
+    for statement in block.statements:
+        if statement['type'] == 'return':
             did_return = True
-
-            file.write("# return\n")
-
-            if statement['value']:
-                expr_stack = ExpressionStack()
-                expr = expr_stack.finalize_stack_references(generate_expression(ctx, statement['value'], expr_stack))
-
-                # set variable to expression result and clear
-                # values added to the stack by the expression (if present)
-                if expr_stack.stack_size > 0:
-                    file.write(f"temp = {expr};\n")
-                    expr_stack.clear(file)
-                    file.write(macro_set_from_stack_base(ctx.return_offset, "temp") + "\n")
-                else:
-                    file.write(macro_set_from_stack_base(ctx.return_offset, expr) + "\n")
-
-            # free all variables
-            total_stack_size = 0
-            for var in ctx.active_variables:
-                total_stack_size += var['size']
-            
-            file.write(macro_stack_pop(total_stack_size))
+        
+        generate_statement(ctx, statement, scope)
 
     # end of block
     if not did_return:
-        if declared_variables:
-            for var_name in declared_variables:
+        if scope.declared_variables:
+            for var_name in scope.declared_variables:
                 ctx.remove_variable(var_name)
             
-            file.write(macro_stack_pop(scope_size))
+            file.write(macro_stack_pop(scope.size))
         
         file.write("# block end\n")
     

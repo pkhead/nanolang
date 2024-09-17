@@ -10,6 +10,7 @@ class Block:
         self.parent = parent
         self.statements = []
         self.return_type = None
+        self.top_level = False
 
         if parent:
             self.return_type = parent.return_type
@@ -159,6 +160,19 @@ def parse_function_call(program, tokens, block, id_token):
         'args': func_args
     }
 
+# returns either an op_cast expression or the expression itself,
+# if a type isn't necessary.
+# also, raises an exception if the cast is not possible.
+def type_cast(program, tok_for_err_msg, expr, output_type):
+    if output_type.is_same(expr.type):
+        return expr
+
+    # throw error if cast is invalid
+    if not expr.type.can_cast(output_type):
+        raise CompilationException.from_token(tok_for_err_msg, f"could not cast {str(expr.type)} to {str(output_type)}")
+
+    return UnaryOperator('op_cast', output_type, expr)
+
 def parse_expression(program, tokens, block, order=0):
     # TODO:
     # order 0: or
@@ -186,9 +200,11 @@ def parse_expression(program, tokens, block, order=0):
             tokens.pop()
             b = parse_expression(program, tokens, block, next_order)
 
-            if not (a.type.is_a(ValueType.STRING) and b.type.is_a(ValueType.STRING)):
+            if not (a.type.can_cast(ValueType.STRING) and b.type.can_cast(ValueType.STRING)):
                 raise CompilationException.from_token(op_tok, "attempt to concatenate " + str(a.type) + " with " + str(b.type))
             
+            a = type_cast(program, op_tok, a, ValueType(ValueType.STRING))
+            b = type_cast(program, op_tok, b, ValueType(ValueType.STRING))
             a = BinaryOperator('op_join', ValueType(ValueType.STRING), a, b)
             op_tok = tokens.peek()
         
@@ -228,11 +244,18 @@ def parse_expression(program, tokens, block, order=0):
     else:
         tok = tokens.peek()
 
+        # parenthesis
         if tok.is_symbol('('):
             tokens.pop()
             expr = parse_expression(program, tokens, block, 0)
             assert(tokens.pop().is_symbol(')'))
             return expr
+        
+        # unary negation
+        elif tok.is_symbol('-'):
+            tokens.pop()
+            expr = parse_expression(program, tokens, block, order)
+            return UnaryOperator('op_neg', expr.type, expr)
         
         # type cast
         elif tok.type == Token.TYPE_KEYWORD and tok.value in Token.KEYWORD_TYPES:
@@ -245,25 +268,7 @@ def parse_expression(program, tokens, block, order=0):
             if not tokens.pop().is_symbol(')'):
                 raise CompilationException.from_token(tok, 'expected )')
 
-            if output_type.is_same(expr.type):
-                return expr
-
-            # check incompatible type casts
-            can_cast = False
-            if output_type.is_a(ValueType.STRING) or output_type.is_a(ValueType.NUMBER):
-                can_cast = True
-
-            elif output_type.is_a(ValueType.BOOL):
-                can_cast = expr.type.is_a(ValueType.NUMBER) or expr.type.is_a(ValueType.POINTER)
-            
-            elif output_type.is_a(ValueType.POINTER):
-                can_cast = expr.type.is_a(ValueType.NUMBER) or expr.type.is_a(ValueType.POINTER)
-
-            # throw error if cast is invalid
-            if not can_cast:
-                raise CompilationException.from_token(tok, f"could not cast {str(expr.type)} to {str(output_type)}")
-
-            return UnaryOperator('op_cast', output_type, expr)
+            return type_cast(program, tok, expr, output_type)
         
         elif tok.type == Token.TYPE_IDENTIFIER:
             tokens.pop()
@@ -303,6 +308,12 @@ def parse_expression(program, tokens, block, order=0):
                 else:
                     return IdentifierOperator('var_get', var_info['type'], var_info['name'])
         
+        # true and false
+        elif tok.is_keyword('true') or tok.is_keyword('false'):
+            tokens.pop()
+            return ExpressionConstant(tok)    
+        
+        # strings and numbers
         elif tok.type == Token.TYPE_STRING or tok.type == Token.TYPE_NUMBER:
             tokens.pop()
             return ExpressionConstant(tok)
@@ -334,131 +345,206 @@ def parse_type(program, tokens, allow_void=False):
         raise CompilationException.from_token(tok, "void type not allowed")
 
     return type
-    
 
-def parse_block(program, tokens, parent_block=None):
+# parses a code branch. can have both a block form and a single-line statement form.
+def parse_branch(program, tokens, block, if_block=False):
+    if tokens.peek().is_symbol(':'):
+        tokens.pop()
+        return {
+            'branch': parse_statement(program, tokens, block),
+            'single': True
+        }
+
+    else:
+        return {
+            'branch': parse_block(program, tokens, block, if_block),
+            'single': False
+        }
+
+# recursive if/ifelse/elseif branch parsing
+def parse_if_branch(program, tokens, block):
+    # if/elseif is already popped from the stack
+
+    tok = tokens.peek()
+    cond_expr = type_cast(program, tok, parse_expression(program, tokens, block), ValueType(ValueType.BOOL))
+    if_branch = parse_branch(program, tokens, block, True)
+    else_branch = None
+    block_end = tokens.pop()
+
+    if block_end.is_keyword('else'):
+        else_branch = parse_branch(program, tokens, block)
+    elif block_end.is_keyword('elseif'):
+        else_branch = {
+            'branch': parse_if_branch(program, tokens, block),
+            'single': True
+        }
+    elif not block_end.is_keyword('end'):
+        raise CompilationException.from_token(block_end, "unexpected " + block_end)
+    
+    return {
+        'type': 'if',
+        'cond': cond_expr,
+        'branch': if_branch,
+        'else_branch': else_branch
+    }
+
+def parse_statement(program, tokens, block):
+    tok = tokens.pop()
+    
+    if tok.is_keyword('drop'):
+        raise Exception("drop command not implemented")
+
+    elif tok.is_keyword('return'):
+        if not block.return_type.is_void():
+            return_expr = parse_expression(program, tokens, block)
+            if not return_expr.type.is_same(block.return_type):
+                raise CompilationException.from_token(tok, f"cannot convert {str(return_expr.type)} to {str(block.return_type)}")
+
+            statement = {
+                'type': 'return',
+                'value': return_expr
+            }
+        
+        else:
+            statement = {
+                'type': 'return',
+                'value': None
+            }
+        
+        return statement
+    
+    elif tok.is_keyword('var'):
+        var_name = tokens.pop().get_identifier()
+
+        # two valid forms: one with a specified type and one without
+        if tokens.peek().is_symbol(':'):
+            tokens.pop()
+            var_type = parse_type(program, tokens)
+        else:
+            var_type = None
+
+        # variable declaration + assignment in one line
+        tok = tokens.peek()
+        if tok.is_symbol('='):
+            tokens.pop()
+            expr = parse_expression(program, tokens, block)
+
+            # if no type was specified, use type inference
+            if not var_type:
+                var_type = expr.type
+            
+            if not expr.type.is_same(var_type):
+                raise CompilationException.from_token(tok, f"attempt to assign a {str(expr.type)} to a {str(var_type)}")
+            statement = {
+                'type': 'var_declare',
+                'var_name': var_name,
+                'var_type': var_type,
+                'init': expr
+            }
+            print("EXPR: " + str(expr))
+        
+        # variable declaration without initial assignment
+        else:
+            statement = {
+                'type': 'var_declare',
+                'var_name': var_name,
+                'var_type': var_type,
+                'init': None
+            }
+        
+        block.declare_variable(var_name, var_type)
+        return statement
+
+    elif tok.is_keyword('if'):
+        return parse_if_branch(program, tokens, block)
+    
+    # since there is no expression-as-statement functionality (partly due to the lack of semicolons)
+    # function call and variable assignment statements have to be specifically programmed
+    elif tok.type == Token.TYPE_IDENTIFIER:
+        # variable assignment
+        if tokens.peek().is_symbol('='):
+            var_name = tok.get_identifier()
+            var_info = block.get_variable_info(var_name)
+
+            # TODO: check if variable is a function name for error message
+            if not var_info:
+                raise CompilationException.from_token(tok, f"use of undeclared identifier '{var_name}'")
+
+            var_type = var_info['type']
+
+            # pop equals sign
+            tokens.pop()
+
+            # read expression
+            expr = parse_expression(program, tokens, block)
+            if not expr.type.is_same(var_type):
+                raise CompilationException.from_token(tok, f"attempt to assign a {str(expr.type)} to a {str(var_type)}")
+            statement = {
+                'type': 'var_assign',
+                'var_name': var_name,
+                'value': expr
+            }
+            print("EXPR: " + str(expr))
+            
+            return statement
+        else:
+            func_call_data = parse_function_call(program, tokens, block, tok)
+
+            return {
+                'type': 'builtin_func_call' if func_call_data['builtin'] else 'func_call',
+                'func_name': func_call_data['function'].name,
+                'args': func_call_data['args']
+            }
+    
+    else:
+        raise CompilationException.from_token(tok, "unexpected " + str(tok))
+
+# if_block is only set to true for if block processing
+# if true, it will take "else" or "elseif" as the end of a block,
+# and also not pop it off the stack for inspection by the caller.
+def parse_block(program, tokens, parent_block=None, if_block=False):
     block = Block(parent_block)
     does_return = False
 
     while True:
-        tok = tokens.pop()
-        if tok.is_keyword('end'):
-            if not block.return_type.is_void() and not does_return:
-                raise CompilationException.from_token(tok, "not all code paths return a value")
-            
-            if not does_return:
-                block.statements.append({
-                    'type': 'return',
-                    'value': None
-                })
+        tok = tokens.peek()
+
+        if tok.is_keyword('end') or (if_block and (tok.is_keyword('else') or tok.is_keyword('elseif'))):
+            if not if_block: tokens.pop()
+
+            if block.top_level:
+                if not block.return_type.is_void() and not does_return:
+                    raise CompilationException.from_token(tok, "not all code paths return a value")
+                
+                if not does_return:
+                    block.statements.append({
+                        'type': 'return',
+                        'value': None
+                    })
 
             break
         
-        if tok.is_keyword('drop'):
-            raise Exception("drop command not implemented")
-
-        elif tok.is_keyword('return'):
-            if not block.return_type.is_void():
-                return_expr = parse_expression(program, tokens, block)
-                if not return_expr.type.is_same(block.return_type):
-                    raise CompilationException.from_token(tok, f"cannot convert {str(return_expr.type)} to {str(block.return_type)}")
-
-                statement = {
-                    'type': 'return',
-                    'value': return_expr
-                }
-            
-            else:
-                statement = {
-                    'type': 'return',
-                    'value': None
-                }
-            
-            if not does_return:
-                block.statements.append(statement)
-            
-            does_return = True
-        
-        elif tok.is_keyword('var'):
-            var_name = tokens.pop().get_identifier()
-            assert(tokens.pop().is_symbol(':'))
-            var_type = parse_type(program, tokens)
-
-            # variable declaration + assignment in one line
-            tok = tokens.peek()
-            if tok.is_symbol('='):
-                tokens.pop()
-                expr = parse_expression(program, tokens, block)
-                if not expr.type.is_same(var_type):
-                    raise CompilationException.from_token(tok, f"attempt to assign a {str(expr.type)} to a {str(var_type)}")
-                statement = {
-                    'type': 'var_declare',
-                    'var_name': var_name,
-                    'var_type': var_type,
-                    'init': expr
-                }
-                print("EXPR: " + str(expr))
-            
-            # variable declaration without initial assignment
-            else:
-                statement = {
-                    'type': 'var_declare',
-                    'var_name': var_name,
-                    'var_type': var_type,
-                    'init': None
-                }
-            
-            block.declare_variable(var_name, var_type)
-
-            if not does_return:
-                block.statements.append(statement)
-        
-        # since there is no expression-as-statement functionality (partly due to the lack of semicolons)
-        # function call and variable assignment statements have to be specifically programmed
-        elif tok.type == Token.TYPE_IDENTIFIER:
-            # variable assignment
-            if tokens.peek().is_symbol('='):
-                var_name = tok.get_identifier()
-                var_type = block.get_variable_info(var_name)['type']
-
-                # pop equals sign
-                tokens.pop()
-
-                # read expression
-                expr = parse_expression(program, tokens, block)
-                if not expr.type.is_same(var_type):
-                    raise CompilationException.from_token(tok, f"attempt to assign a {str(expr.type)} to a {str(var_type)}")
-                statement = {
-                    'type': 'var_assign',
-                    'var_name': var_name,
-                    'value': expr
-                }
-                print("EXPR: " + str(expr))
-                
-                if not does_return:
-                    block.statements.append(statement)
-            else:
-                func_call_data = parse_function_call(program, tokens, block, tok)
-
-                if not does_return:
-                    block.statements.append({
-                        'type': 'builtin_func_call' if func_call_data['builtin'] else 'func_call',
-                        'func_name': func_call_data['function'].name,
-                        'args': func_call_data['args']
-                    })
-        
         else:
-            raise CompilationException.from_token(tok, "unexpected " + str(tok))
+            statement = parse_statement(program, tokens, block)
+
+            if not does_return:
+                block.statements.append(statement)
+
+            if statement['type'] == 'return':
+                does_return = True
 
     return block
 
 def parse_function(program, tokens, name, func_type, func_params, attribs):
     func_block = Block()
     func_block.return_type = func_type
+    func_block.top_level = True
+
     for param in func_params:
         func_block.declare_parameter(param['name'], param['type'])
     
     block = parse_block(program, tokens, func_block)
+
     return Function(name, func_type, func_params, block, attribs[:])
 
 def parse_program(tokens):

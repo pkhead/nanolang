@@ -70,3 +70,21 @@ class ValueType:
         
         # TODO: structs can have different sizes
         return 1
+
+    def can_cast(self, to_type):
+        if not isinstance(to_type, ValueType):
+            to_type = ValueType(to_type)
+        
+        if self.is_same(to_type): return True
+
+        can_cast = False
+        if to_type.is_a(ValueType.STRING) or to_type.is_a(ValueType.NUMBER):
+            can_cast = True
+
+        elif to_type.is_a(ValueType.BOOL):
+            can_cast = self.is_a(ValueType.NUMBER) or self.is_a(ValueType.POINTER)
+        
+        elif to_type.is_a(ValueType.POINTER):
+            can_cast = self.is_a(ValueType.NUMBER) or self.is_a(ValueType.POINTER)
+        
+        return can_cast
