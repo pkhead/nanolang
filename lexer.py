@@ -63,7 +63,7 @@ def parse_tokens(file_path):
     KEYWORDS = Token.KEYWORD_TYPES + [
         'func', 'var',
 
-        'if', 'else', 'elseif', 'while', 'for', 'block', 'drop', 'end', 'return',
+        'if', 'else', 'elseif', 'while', 'repeat', 'for', 'block', 'drop', 'end', 'return',
         'true', 'false',
 
         # asset links

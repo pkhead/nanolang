@@ -49,23 +49,20 @@ costume "alien-in-suit.png"
 #     return a + b
 # end
 
-func some_number(): number
-    return number(ask("enter a number"))
+func fib(n: number): number
+    if n == 0 || n == 1: return n
+    else
+        return fib(n-1) + fib(n-2)
+    end
 end
 
 @nowarp
 on flag
-    var num = number(ask("guess!"))
-    var str = "wrong!"
-
-    if num == 0
-        var str = "correct!"
-        sprite_say_wait(str, 2)
-    else
-        sprite_say_wait(str, 2)
+    var i = 1
+    repeat 10
+        # var num = number(ask("enter index of fibonacci sequence"))
+        # sprite_say_wait(string(fib(num)), 2)
+        sprite_say_wait(string(i), 0.1)
+        i = i + 1
     end
-
-    # var num: number = 100
-    # var num2: number = -100
-    #sprite_say_wait("Hello, " & ask("number:" & (some_number() + num + num2)) & "!", 2)
 end

@@ -161,12 +161,19 @@ class SpriteContext:
         self.file = file
         self.function_block_names = {}
 
+
 class FunctionContext:
+    class Tempvar:
+        def __init__(self, size, offset):
+            self.size = size
+            self.offset = offset
+    
     def __init__(self, sprite_ctx, paramlist, return_type):
         self.sprite_ctx = sprite_ctx
         self.nowarp = False
         self.does_return = False
         self.active_variables = []
+        self.active_tempvars = []
         self._offset = 0
         
         # arguments
@@ -195,6 +202,23 @@ class FunctionContext:
             'offset': self._offset
         })
         self._offset += size
+    
+    # non-temporal location on the stack unassociated
+    # with a variable
+    def new_tempvar(self, size):
+        assert(size > 0)
+        tempvar = FunctionContext.Tempvar(size, self._offset + 1) # add one to account for the internal data at item 0 of each stack base
+        self._offset += size
+        self.active_tempvars.append(tempvar)
+
+        return tempvar
+    
+    def remove_tempvar(self, tempvar):
+        if not tempvar in self.active_tempvars:
+            raise Exception('could not find tempvar ' + str(tempvar))
+        
+        self.active_tempvars.remove(tempvar)
+        self._offset -= tempvar.size
     
     def remove_variable(self, var_name):
         for i in range(len(self.active_variables)):
@@ -371,6 +395,10 @@ def push_expression_result(ctx, expr, to_temp=False):
         else:
             file.write(macro_stack_push(expr) + "\n")
 
+def generate_branch(ctx, scope, branch):
+    if branch['single']: generate_statement(ctx, branch['branch'], scope)
+    else: generate_block(ctx, branch['branch'])
+
 def generate_statement(ctx, statement, scope):
     file = ctx.sprite_ctx.file
     opcode = statement['type']
@@ -459,19 +487,43 @@ def generate_statement(ctx, statement, scope):
     # opcode if
     elif opcode == 'if':
         push_expression_result(ctx, statement['cond'], True)
-        file.write("if temp != 0 {\n")
+        file.write("if (temp+0) != 0 {\n")
 
-        branch = statement['branch']
-        if branch['single']: generate_statement(ctx, branch['branch'], scope)
-        else: generate_block(ctx, branch['branch'])
+        generate_branch(ctx, scope, statement['branch'])
 
         if (statement['else_branch']):
             file.write("} else {\n")
 
-            branch = statement['else_branch']
-            if branch['single']: generate_statement(ctx, branch['branch'], scope)
-            else: generate_block(ctx, branch['branch'])
+            generate_branch(ctx, scope, statement['else_branch'])
 
+        file.write("}\n")
+    
+    # opcode while
+    elif opcode == 'while':
+        # create tempvar for the while condition
+        # (can't use temp directly due to screen refresh at the end of loop)
+        tempvar = ctx.new_tempvar(1)
+        file.write(macro_stack_push(gs_literal("")) + "\n")
+
+        push_expression_result(ctx, statement['cond'], True)
+        file.write(macro_set_from_stack_base(tempvar.offset, "temp") + "\n")
+        file.write(f"until ({macro_get_from_stack_base(tempvar.offset)}+0) == 0 {{\n")
+
+        # while inner loop
+        generate_branch(ctx, scope, statement['branch'])
+
+        # re-evaluate while condition again at the end of the loop
+        push_expression_result(ctx, statement['cond'], True)
+        file.write(macro_set_from_stack_base(tempvar.offset, "temp") + "\n")
+        file.write("}\n")
+
+        ctx.remove_tempvar(tempvar)
+    
+    # opcode repeat
+    elif opcode == 'repeat':
+        push_expression_result(ctx, statement['count'], True)
+        file.write("repeat temp {\n")
+        generate_branch(ctx, scope, statement['branch'])
         file.write("}\n")
     
     else:

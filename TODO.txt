@@ -1,5 +1,6 @@
-- control flow
-- variable type inference
+- for loop
+- input project/output directory in cli
+- pointers + memalloc
 
 - assigning to temp here does not work with structs:
 - if expr_stack.stack_size > 0:

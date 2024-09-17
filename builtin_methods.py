@@ -9,6 +9,13 @@ class BuiltinFunction:
         self.generate_return = generate_return
 
 BUILTIN_METHODS = {
+    'random': BuiltinFunction(
+        name='random',
+        type='number',
+        params=['number', 'number'],
+        generate=lambda args: f"random({args[0]}, {args[1]})"
+    ),
+
     'ask': BuiltinFunction(
         name='ask',
         type='string',

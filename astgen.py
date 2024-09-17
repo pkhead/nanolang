@@ -513,6 +513,26 @@ def parse_statement(program, tokens, block):
     elif tok.is_keyword('if'):
         return parse_if_branch(program, tokens, block)
     
+    elif tok.is_keyword('while'):
+        cond_expr = type_cast(program, tok, parse_expression(program, tokens, block), ValueType(ValueType.BOOL))
+        branch = parse_branch(program, tokens, block)
+
+        return {
+            'type': 'while',
+            'cond': cond_expr,
+            'branch': branch
+        }
+    
+    elif tok.is_keyword('repeat'):
+        count_expr = type_cast(program, tok, parse_expression(program, tokens, block), ValueType(ValueType.NUMBER))
+        branch = parse_branch(program, tokens, block)
+
+        return {
+            'type': 'repeat',
+            'count': count_expr,
+            'branch': branch
+        }
+    
     # since there is no expression-as-statement functionality (partly due to the lack of semicolons)
     # function call and variable assignment statements have to be specifically programmed
     elif tok.type == Token.TYPE_IDENTIFIER:
