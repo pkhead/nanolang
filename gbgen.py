@@ -30,14 +30,13 @@ import re
 # return values are handled by first allocating some memory by the caller
 # that's equivalent to the size of the returned value. (changing the stack ptr)
 # then, when the callee wants to return the value, it sets the data starting from the address
-# at the pointer of its stack base minus the size of the returned value, thus matching up with
-# the space allocated by the caller before the function call. then, the stack frame of the callee gets cleaned up.
-# by the callee.
+# at the pointer of its stack base, minus the total size of function arguments, minus the size of the returned value,
+# thus matching up with the space allocated by the caller before the function call.
 #
 # -- Function arguments --
-# function arguments are passed to called functions by pushing values to the stack before the
+# function arguments are passed to called functions by pushing values to the stack after the
 # return value allocation. arguments will then be accessed by the caller from negative offsets of its
-# stack base.
+# stack base. arguments will be cleaned up by the caller.
 
 # user function prefix: "_"
 # internal function prefix: "internal_"
@@ -133,6 +132,9 @@ proc internal_alloc_stack {
 def macro_get_from_stack_base(offset):
     return f"memory[memory[stack_ptrs[$stack_id]] + ({offset})]"
 
+def macro_set_from_stack_base(offset, value):
+    return f"memory[memory[stack_ptrs[$stack_id]] + ({offset})] = {value};"
+
 def macro_change_stack_base(delta):
     return f"memory[stack_ptrs[$stack_id]] = memory[stack_ptrs[$stack_id]] + ({delta})"
 
@@ -153,12 +155,30 @@ class SpriteContext:
         self.function_block_names = {}
 
 class FunctionContext:
-    def __init__(self, sprite_ctx):
+    def __init__(self, sprite_ctx, paramlist, return_type):
         self.sprite_ctx = sprite_ctx
         self.nowarp = False
         self.does_return = False
         self.active_variables = []
         self._offset = 0
+        
+        # arguments
+        argoffset = 0
+        self.arguments = []
+
+        for param in reversed(paramlist):
+            argoffset -= param['type'].size()
+            self.arguments.insert(0, {
+                'name': param['name'],
+                'size': param['type'].size(),
+                'offset': argoffset
+            })
+        
+        # calculate return value location
+        if not return_type.is_void():
+            self.return_offset = argoffset - return_type.size()
+        else:
+            self.return_offset = 0
 
     def new_variable(self, var_name, size):
         assert(size > 0)
@@ -181,6 +201,10 @@ class FunctionContext:
     def get_variable_offset(self, var_name):
         for v in self.active_variables:
             if v['name'] == var_name:
+                return v['offset'] + 1 # add one to account for the internal data at item 0 of each stack base
+        
+        for v in self.arguments:
+            if v['name'] == var_name:
                 return v['offset']
 
 class ExpressionStack:
@@ -197,31 +221,43 @@ class ExpressionStack:
             file.write(macro_stack_pop(self.stack_size) + '\n')
     
     def _re_replace(self, m):
-        return macro_stack_read(self.stack_size - int(m.group(1)))
+        return macro_stack_read(self.stack_size - int(m.group(1)) - 1)
     
     def finalize_stack_references(self, v):
         return re.sub(r'@<(\d+)>', self._re_replace, v)
 
-def generate_func_call(ctx, func_data):
+def generate_func_call(ctx, func_data, func_args):
     file = ctx.sprite_ctx.file
     func_return_type = func_data.type
 
     # allocate space for return value, if needed
-    if not func_return_type.is_a(ValueType.VOID):
+    if not func_return_type.is_void():
         file.write(f"stack_heads[$stack_id] = stack_heads[$stack_id] + {gs_literal(func_return_type.size())};\n")
+    
+    # parse arguments
+    total_arg_size = 0
+    for arg in func_args:
+        total_arg_size += arg.type.size()
+        push_expression_result(ctx, arg)
     
     # proc call
     file.write(ctx.sprite_ctx.function_block_names[func_data.name] + ' $stack_id;\n')
+
+    # clean up arguments
+    if total_arg_size > 0:
+        file.write(macro_stack_pop(total_arg_size) + "\n")
+    
+    # leaves return value on the stack
 
 def generate_expression(ctx, expr, stack):
     if expr.op == 'const':
         return gs_literal(expr.value)
 
     elif expr.op == 'var_get':
-        return macro_get_from_stack_base(ctx.get_variable_offset(expr.id) + 1)
+        return macro_get_from_stack_base(ctx.get_variable_offset(expr.id))
     
     elif expr.op == 'func_call':
-        generate_func_call(ctx, ctx.sprite_ctx.program['functions'][expr.id])
+        generate_func_call(ctx, ctx.sprite_ctx.program['functions'][expr.id], expr.data)
         return "@<" + str(stack.push()) + ">"
 
     elif isinstance(expr, BinaryOperator):
@@ -246,6 +282,21 @@ def generate_expression(ctx, expr, stack):
     else:
         raise Exception('unknown opcode ' + expr.op)
 
+def push_expression_result(ctx, expr):
+    file = ctx.sprite_ctx.file
+
+    expr_stack = ExpressionStack()
+    expr = expr_stack.finalize_stack_references(generate_expression(ctx, expr, expr_stack))
+
+    # set variable to expression result and clear
+    # values added to the stack by the expression (if present)
+    if expr_stack.stack_size > 0:
+        file.write(f"temp = {expr};\n")
+        expr_stack.clear(file)
+        file.write(macro_stack_push("temp") + "\n")
+    else:
+        file.write(macro_stack_push(expr) + "\n")
+
 # assumes that there is a argument named stack_id
 def generate_block(ctx, block):
     file = ctx.sprite_ctx.file
@@ -255,8 +306,11 @@ def generate_block(ctx, block):
     # parse statement
     scope_size = 0
     declared_variables = []
+    did_return = False
 
     for statement in block.statements:
+        print(statement['type'])
+
         # opcode var_declare
         if statement['type'] == 'var_declare':
             var_name = statement['var_name']
@@ -266,18 +320,13 @@ def generate_block(ctx, block):
 
             file.write(f'# {var_name} declaration \n')
 
+            # write initialization expression if present
             if statement['init'] != None:
-                expr_stack = ExpressionStack()
-                expr = expr_stack.finalize_stack_references(generate_expression(ctx, statement['init'], expr_stack))
-
-                if expr_stack.stack_size > 0:
-                    file.write(f"temp = {expr};\n")
-                    expr_stack.clear(file)
-                    file.write(macro_stack_push("temp") + "\n")
-                else:
-                    file.write(macro_stack_push(expr) + "\n")
+                push_expression_result(ctx, statement['init'])
+            
+            # no initialization expression; initialize to an empty string
             else:
-                file.write(macro_stack_push('\"\"'))
+                file.write(macro_stack_push('\"\"') + "\n")
         
         # opcode func_call
         elif statement['type'] == 'func_call':
@@ -285,17 +334,43 @@ def generate_block(ctx, block):
             generate_func_call(ctx, func_data)
 
             # drop return value if it exists
-            if not func_data.type.is_a(ValueType.VOID):
+            if not func_data.type.is_void():
                 file.write(macro_stack_pop(gs_literal(func_data.type.size())))
-
-    # end of function
-    if declared_variables:
-        for var_name in declared_variables:
-            ctx.remove_variable(var_name)
         
-        file.write(macro_stack_pop(scope_size))
-    
-    file.write("# block end\n")
+        elif statement['type'] == 'return':
+            did_return = True
+
+            file.write("# return\n")
+
+            if statement['value']:
+                expr_stack = ExpressionStack()
+                expr = expr_stack.finalize_stack_references(generate_expression(ctx, statement['value'], expr_stack))
+
+                # set variable to expression result and clear
+                # values added to the stack by the expression (if present)
+                if expr_stack.stack_size > 0:
+                    file.write(f"temp = {expr};\n")
+                    expr_stack.clear(file)
+                    file.write(macro_set_from_stack_base(ctx.return_offset, "temp") + "\n")
+                else:
+                    file.write(macro_set_from_stack_base(ctx.return_offset, expr) + "\n")
+
+            # free all variables
+            total_stack_size = 0
+            for var in ctx.active_variables:
+                total_stack_size += var['size']
+            
+            file.write(macro_stack_pop(total_stack_size))
+
+    # end of block
+    if not did_return:
+        if declared_variables:
+            for var_name in declared_variables:
+                ctx.remove_variable(var_name)
+            
+            file.write(macro_stack_pop(scope_size))
+        
+        file.write("# block end\n")
     
 # assumes that there is a argument named stack_id
 def generate_procedure(func_ctx, definition):
@@ -327,9 +402,9 @@ def generate_program(program, file):
     file.write(program_boilerplate + "\n")
 
     for func in program['functions'].values():
-        func_ctx = FunctionContext(sprite_ctx)
+        func_ctx = FunctionContext(sprite_ctx, func.parameters, func.type)
         func_ctx.nowarp = 'nowarp' in func.attributes
-        func_ctx.does_return = not func.type.is_a(ValueType.VOID)
+        func_ctx.does_return = not func.type.is_void()
 
         block_name = "_" + func.name
         sprite_ctx.function_block_names[func.name] = block_name
@@ -344,7 +419,7 @@ def generate_program(program, file):
     
     event_id = 0
     for event_handler in program['events']:
-        func_ctx = FunctionContext(sprite_ctx)
+        func_ctx = FunctionContext(sprite_ctx, [], ValueType(ValueType.VOID))
         func_ctx.nowarp = 'nowarp' in event_handler['attributes']
         func_ctx.does_return = False
 

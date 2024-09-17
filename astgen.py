@@ -32,6 +32,9 @@ class ValueType:
         else:
             raise Exception("internal: unknown ValueType value " + str(self.type))
     
+    def is_void(self):
+        return self.type == ValueType.VOID
+    
     def is_a(self, type_id):
         return self.type == type_id
     
@@ -51,9 +54,13 @@ class ValueType:
 class Block:
     def __init__(self, parent=None):
         self.variables = {}
+        self.parameters = {}
         self.parent = parent
         self.statements = []
         self.return_type = None
+
+        if parent:
+            self.return_type = parent.return_type
     
     def declare_variable(self, var_name, var_type):
         self.variables[var_name] = {
@@ -61,11 +68,19 @@ class Block:
             'type': var_type
         }
     
+    def declare_parameter(self, var_name, var_type):
+        self.parameters[var_name] = {
+            'name': var_name,
+            'type': var_type
+        }
+    
     def get_variable_info(self, var_name):
         if var_name in self.variables:
             return self.variables[var_name]
-        
-        return None if self.parent == None else self.parent.get_variable_info(var_name)
+        elif var_name in self.parameters:
+            return self.parameters[var_name]
+        else:
+            return None if self.parent == None else self.parent.get_variable_info(var_name)
 
 class ExpressionConstant:
     def __init__(self, tok):
@@ -124,9 +139,10 @@ class IdentifierOperator:
         return f'{(self.op)}<{self.type}>(<{self.id}>, {str(self.data)})'
 
 class Function:
-    def __init__(self, name, type, definition, attribs):
+    def __init__(self, name, type, params, definition, attribs):
         self.name = name
         self.type = type
+        self.parameters = params
         self.definition = definition
         self.attributes = attribs
 
@@ -155,17 +171,30 @@ def parse_function_call(program, tokens, block, id_token):
     func_args = []
 
     # read function arguments
-    # TODO: type-check with function arguments
-    while True:
-        next_tok = tokens.peek()
-        if next_tok.is_symbol(')'):
-            tokens.pop()
-            break
+    if not tokens.peek().is_symbol(')'):
+        while True:
+            next_tok = tokens.peek()
 
-        if len(func_args) >= 0: # 0 = number of function arguments
-            raise CompilationException.from_token(id_token, f"too many function arguments for '{func_name}")
+            arg_index = len(func_args)
+            if arg_index >= len(func_data.parameters):
+                raise CompilationException.from_token(id_token, f"too many function arguments for '{func_name}'")
+        
+            arg_expr = parse_expression(program, tokens, block)
+            param_type = func_data.parameters[arg_index]['type']
+            if not arg_expr.type.is_same(param_type):
+                raise CompilationException.from_token(next_tok, f"expected {str(param_type)} for argument {arg_index}, got {str(arg_expr.type)}")
+            
+            func_args.append(arg_expr)
+
+            next_tok = tokens.pop()
+            if next_tok.is_symbol(')'): break
+            elif not next_tok.is_symbol(','):
+                raise CompilationException.from_token(next_tok, 'expected , or ), got ' + str(next_tok))
+    else:
+        assert(tokens.pop().is_symbol(')'))
     
-        func_args.append(parse_expression(program, tokens, block))
+    if len(func_args) != len(func_data.parameters):
+        raise CompilationException.from_token(id_token, f"not enough function arguments for '{func_name}'")
     
     return {
         'function': func_data,
@@ -301,13 +330,46 @@ def parse_type(program, tokens, allow_void=False):
 
 def parse_block(program, tokens, parent_block=None):
     block = Block(parent_block)
+    does_return = False
 
     while True:
         tok = tokens.pop()
-        if tok.is_keyword('end'): break
+        if tok.is_keyword('end'):
+            if not block.return_type.is_void() and not does_return:
+                raise CompilationException.from_token(tok, "not all code paths return a value")
+            
+            if not does_return:
+                block.statements.append({
+                    'type': 'return',
+                    'value': None
+                })
+
+            break
         
         if tok.is_keyword('drop'):
             raise Exception("drop command not implemented")
+
+        elif tok.is_keyword('return'):
+            if not block.return_type.is_void():
+                return_expr = parse_expression(program, tokens, block)
+                if not return_expr.type.is_same(block.return_type):
+                    raise CompilationException.from_token(tok, f"cannot convert {str(return_expr.type)} to {str(block.return_type)}")
+
+                statement = {
+                    'type': 'return',
+                    'value': return_expr
+                }
+            
+            else:
+                statement = {
+                    'type': 'return',
+                    'value': None
+                }
+            
+            if not does_return:
+                block.statements.append(statement)
+            
+            does_return = True
         
         elif tok.is_keyword('var'):
             var_name = tokens.pop().get_identifier()
@@ -339,28 +401,36 @@ def parse_block(program, tokens, parent_block=None):
                 }
             
             block.declare_variable(var_name, var_type)
-            block.statements.append(statement)
+
+            if not does_return:
+                block.statements.append(statement)
         
         # function call
         # since there is no expression-as-statement functionality (partly due to the lack of semicolons)
         # function call statements have to be specifically programmed
         elif tok.type == Token.TYPE_IDENTIFIER:
             func_call_data = parse_function_call(program, tokens, block, tok)
-            block.statements.append({
-                'type': 'func_call',
-                'func_name': func_call_data['function'].name,
-                'args': func_call_data['args']
-            })
+
+            if not does_return:
+                block.statements.append({
+                    'type': 'func_call',
+                    'func_name': func_call_data['function'].name,
+                    'args': func_call_data['args']
+                })
         
         else:
             raise CompilationException.from_token(tok, "unexpected " + str(tok))
 
     return block
 
-def parse_function(program, tokens, name, func_type, attribs):
-    block = parse_block(program, tokens)
-    block.return_type = func_type
-    return Function(name, func_type, block, attribs[:])
+def parse_function(program, tokens, name, func_type, func_params, attribs):
+    func_block = Block()
+    func_block.return_type = func_type
+    for param in func_params:
+        func_block.declare_parameter(param['name'], param['type'])
+    
+    block = parse_block(program, tokens, func_block)
+    return Function(name, func_type, func_params, block, attribs[:])
 
 def parse_program(tokens):
     program = {}
@@ -402,13 +472,35 @@ def parse_program(tokens):
                 raise CompilationException.from_token(tok, f"function '{func_name}' already defined")
             
             assert(tokens.pop().is_symbol('('))
-            assert(tokens.pop().is_symbol(')'))
+
+            # read function parameters
+            func_params = []
+            if not tokens.peek().is_symbol(')'):
+                while True:
+                    param_name = tokens.pop().get_identifier()
+                    assert(tokens.pop().is_symbol(':'))
+                    param_type = parse_type(program, tokens)
+
+                    func_params.append({
+                        'name': param_name,
+                        'type': param_type
+                    })
+
+                    # read either a closing parenthesis or a comma
+                    next_tok = tokens.pop()
+                    if next_tok.is_symbol(')'): break
+                    elif not next_tok.is_symbol(','):
+                        raise CompilationException.from_token(next_tok, 'expected , or ), got ' + str(next_tok))
+            else:
+                assert(tokens.pop().is_symbol(')'))
+            
+            # read function return type
             assert(tokens.pop().is_symbol(':'))
 
             func_type = parse_type(program, tokens, True)
             program['functions'][func_name] = parse_function(
                 program, tokens,
-                name=func_name, func_type=func_type, attribs=attributes)
+                name=func_name, func_type=func_type, func_params=func_params, attribs=attributes)
 
             attributes.clear()
         
@@ -419,9 +511,12 @@ def parse_program(tokens):
             if not event_name in EVENT_NAMES:
                 raise CompilationException.from_token(tok, f"invalid event '{event_name}'")
             
+            parent_block = Block()
+            parent_block.return_type = ValueType(ValueType.VOID)
+
             program['events'].append({
                 'event_name': event_name,
-                'definition': parse_block(program, tokens),
+                'definition': parse_block(program, tokens, parent_block),
                 'attributes': attributes[:]
             })
             attributes.clear()
