@@ -7,7 +7,7 @@ class Token:
     TYPE_NUMBER = 3
     TYPE_STRING = 4
 
-    KEYWORD_TYPES = ['void', 'string', 'number']
+    KEYWORD_TYPES = ['void', 'string', 'number', 'bool']
     EVENT_NAMES = ['flag', 'keypress', 'click', 'broadcast']
     
     def __init__(self, lineno, linecol, token_type, value):
@@ -190,6 +190,13 @@ def parse_tokens(file_path):
                             break
                         
                         if len(candidates) == 1:
+                            sym += char
+                            while len(sym) < len(candidates[0]):
+                                sym += file.read(1)
+                            
+                            if sym != candidates[0]:
+                                raise CompilationException(token_lineno, token_linecol, "unknown symbol")
+                            
                             tokens.append(Token(token_lineno, token_linecol, Token.TYPE_SYMBOL, candidates[0]))
                             break
 

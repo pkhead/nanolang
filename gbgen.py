@@ -330,21 +330,21 @@ def generate_expression(ctx, expr, stack):
             case 'op_join':
                 return f"({val_a} & {val_b})"
             case 'op_bor':
-                return f"({val_a} || {val_b})"
+                return f"({val_a} or {val_b})"
             case 'op_band':
-                return f"({val_a} && {val_b})"
+                return f"({val_a} and {val_b})"
             case 'op_eq':
                 return f"({val_a} == {val_b})"
             case 'op_neq':
-                return f"!({val_a} == {val_b})"
+                return f"not ({val_a} == {val_b})"
             case 'op_lt':
                 return f"({val_a} < {val_b})"
             case 'op_gt':
                 return f"({val_a} > {val_b})"
             case 'op_lte':
-                return f"!({val_a} > {val_b})"
+                return f"not ({val_a} > {val_b})"
             case 'op_gte':
-                return f"!({val_a} < {val_b})"
+                return f"not ({val_a} < {val_b})"
             case _:
                 raise Exception('unknown opcode ' + expr.op)
     

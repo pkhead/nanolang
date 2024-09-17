@@ -92,11 +92,11 @@ class IdentifierOperator:
         return f'{(self.op)}<{self.type}>(<{self.id}>, {str(self.data)})'
 
 class Function:
-    def __init__(self, name, type, params, definition, attribs):
+    def __init__(self, name, type, params, attribs):
         self.name = name
         self.type = type
         self.parameters = params
-        self.definition = definition
+        self.definition = None
         self.attributes = attribs
 
 ATTRIBUTES = ['nowarp']
@@ -196,7 +196,7 @@ def parse_expression(program, tokens, block, order=0):
 
             a = type_cast(program, op_tok, a, ValueType(ValueType.BOOL))
             b = type_cast(program, op_tok, b, ValueType(ValueType.BOOL))
-            a = BinaryOperator('op_bor', ValueType(ValueType.STRING), a, b)
+            a = BinaryOperator('op_bor', ValueType(ValueType.BOOL), a, b)
             op_tok = tokens.peek()
         return a
     
@@ -209,7 +209,7 @@ def parse_expression(program, tokens, block, order=0):
 
             a = type_cast(program, op_tok, a, ValueType(ValueType.BOOL))
             b = type_cast(program, op_tok, b, ValueType(ValueType.BOOL))
-            a = BinaryOperator('op_band', ValueType(ValueType.STRING), a, b)
+            a = BinaryOperator('op_band', ValueType(ValueType.BOOL), a, b)
             op_tok = tokens.peek()
         return a
     
@@ -225,7 +225,7 @@ def parse_expression(program, tokens, block, order=0):
             op_tok = tokens.peek()
         return a
     
-    elif order == 3:
+    elif order == 3: # comparison symbols
         a = parse_expression(program, tokens, block, next_order)
         op_tok = tokens.peek()
         while op_tok.type == Token.TYPE_SYMBOL and op_tok.value in COMPARISON_SYMBOLS:
@@ -234,7 +234,7 @@ def parse_expression(program, tokens, block, order=0):
             b = type_cast(program, op_tok, b, a.type)
 
             op_name = COMPARISON_SYMBOL_NAMES[COMPARISON_SYMBOLS.index(op_tok.value)]
-            a = BinaryOperator(op_name, ValueType(ValueType.STRING), a, b)
+            a = BinaryOperator(op_name, ValueType(ValueType.BOOL), a, b)
             op_tok = tokens.peek()
         return a
 
@@ -368,6 +368,9 @@ def parse_expression(program, tokens, block, order=0):
         elif tok.type == Token.TYPE_STRING or tok.type == Token.TYPE_NUMBER:
             tokens.pop()
             return ExpressionConstant(tok)
+        
+        else:
+            raise CompilationException.from_token(tok, 'unexpected ' + str(tok))
     
     raise Exception('parse_expression: unreachable code')
 
@@ -587,17 +590,15 @@ def parse_block(program, tokens, parent_block=None, if_block=False):
 
     return block
 
-def parse_function(program, tokens, name, func_type, func_params, attribs):
+def parse_function(program, tokens, function):
     func_block = Block()
-    func_block.return_type = func_type
+    func_block.return_type = function.type
     func_block.top_level = True
 
-    for param in func_params:
+    for param in function.parameters:
         func_block.declare_parameter(param['name'], param['type'])
     
-    block = parse_block(program, tokens, func_block)
-
-    return Function(name, func_type, func_params, block, attribs[:])
+    function.definition = parse_block(program, tokens, func_block)
 
 def parse_program(tokens):
     program = {}
@@ -665,9 +666,8 @@ def parse_program(tokens):
             assert(tokens.pop().is_symbol(':'))
 
             func_type = parse_type(program, tokens, True)
-            program['functions'][func_name] = parse_function(
-                program, tokens,
-                name=func_name, func_type=func_type, func_params=func_params, attribs=attributes)
+            program['functions'][func_name] = Function(func_name, func_type, func_params, attributes[:])
+            parse_function(program, tokens, program['functions'][func_name])
 
             attributes.clear()
         
