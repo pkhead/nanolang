@@ -172,13 +172,29 @@ def parse_expression(program, tokens, block, order=0):
     # last order: func call, array subscript, struct member access, parentheses, raw values
 
     # FOR NOW:
-    # order 0: + -
-    # order 1: * /
+    # order 0: & (string concatenation)
+    # order 1: + -
+    # order 2: * /
     # + last order
 
     next_order = order+1
 
-    if order == 0: # + -
+    if order == 0: # &
+        a = parse_expression(program, tokens, block, next_order)
+        op_tok = tokens.peek()
+        while op_tok.is_symbol('&'):
+            tokens.pop()
+            b = parse_expression(program, tokens, block, next_order)
+
+            if not (a.type.is_a(ValueType.STRING) and b.type.is_a(ValueType.STRING)):
+                raise CompilationException.from_token(op_tok, "attempt to concatenate " + str(a.type) + " with " + str(b.type))
+            
+            a = BinaryOperator('op_join', ValueType(ValueType.STRING), a, b)
+            op_tok = tokens.peek()
+        
+        return a
+
+    elif order == 1: # + -
         a = parse_expression(program, tokens, block, next_order)
         op_tok = tokens.peek()
         while op_tok.is_symbol('+') or op_tok.is_symbol('-'):
@@ -193,7 +209,7 @@ def parse_expression(program, tokens, block, order=0):
         
         return a
     
-    elif order == 1: # * /
+    elif order == 2: # * /
         a = parse_expression(program, tokens, block, next_order)
         op_tok = tokens.peek()
         while op_tok.is_symbol('*') or op_tok.is_symbol('/'):
@@ -217,6 +233,37 @@ def parse_expression(program, tokens, block, order=0):
             expr = parse_expression(program, tokens, block, 0)
             assert(tokens.pop().is_symbol(')'))
             return expr
+        
+        # type cast
+        elif tok.type == Token.TYPE_KEYWORD and tok.value in Token.KEYWORD_TYPES:
+            output_type = parse_type(program, tokens)
+
+            # get expression inbetween parentheses
+            if not tokens.pop().is_symbol('('):
+                raise CompilationException.from_token(tok, 'expected (')
+            expr = parse_expression(program, tokens, block, 0)
+            if not tokens.pop().is_symbol(')'):
+                raise CompilationException.from_token(tok, 'expected )')
+
+            if output_type.is_same(expr.type):
+                return expr
+
+            # check incompatible type casts
+            can_cast = False
+            if output_type.is_a(ValueType.STRING) or output_type.is_a(ValueType.NUMBER):
+                can_cast = True
+
+            elif output_type.is_a(ValueType.BOOL):
+                can_cast = expr.type.is_a(ValueType.NUMBER) or expr.type.is_a(ValueType.POINTER)
+            
+            elif output_type.is_a(ValueType.POINTER):
+                can_cast = expr.type.is_a(ValueType.NUMBER) or expr.type.is_a(ValueType.POINTER)
+
+            # throw error if cast is invalid
+            if not can_cast:
+                raise CompilationException.from_token(tok, f"could not cast {str(expr.type)} to {str(output_type)}")
+
+            return UnaryOperator('op_cast', output_type, expr)
         
         elif tok.type == Token.TYPE_IDENTIFIER:
             tokens.pop()

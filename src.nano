@@ -49,11 +49,11 @@ costume "alien-in-suit.png"
 #     return a + b
 # end
 
-func some_string(): string
-    return "Who are you?"
+func some_number(): number
+    return 4
 end
 
 @nowarp
 on flag
-    sprite_say_wait(ask(some_string()), 2)
+    sprite_say_wait("Hello, " & ask(string(some_number())) & "!", 2)
 end

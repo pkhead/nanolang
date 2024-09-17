@@ -282,6 +282,14 @@ def generate_expression(ctx, expr, stack):
         else:
             expr_stack.clear(file)
             return out_expr
+    
+    elif expr.op == 'op_cast':
+        value = generate_expression(ctx, expr.expr, stack)
+
+        if expr.type.is_a(ValueType.STRING):
+            return f"(({value}) & \"\")"
+        else:
+            return f"(({value}) + 0)"
 
     elif isinstance(expr, BinaryOperator):
         val_a = generate_expression(ctx, expr.left, stack)
@@ -298,6 +306,9 @@ def generate_expression(ctx, expr, stack):
         
         elif expr.op == 'op_div':
             return f"({val_a} / {val_b})"
+        
+        elif expr.op == 'op_join':
+            return f"({val_a} & {val_b})"
         
         else:
             raise Exception('unknown opcode ' + expr.op)
