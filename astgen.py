@@ -41,6 +41,13 @@ class ValueType:
         else:
             return self.type == other.type
     
+    def size(self):
+        if self.type == ValueType.VOID:
+            raise Exception("internal: attempt to get sizeof void")
+        
+        # TODO: structs can have different sizes
+        return 1
+    
 class Block:
     def __init__(self, parent=None):
         self.variables = {}

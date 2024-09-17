@@ -1,6 +1,43 @@
 # Goboscript generator
 from lexer import Token
 from astgen import ValueType, BinaryOperator
+import re
+
+# == STACK MECHANISM ==
+# nano will use a stack to store the values of variables.
+# each stack frame corresponds to a single function call.
+#
+# there can be multiple stacks allocated simultaneously, since
+# scratch is "multithreaded", so each custom block generated from
+# a function has an added first argument named "stack_id". this is
+# the id of the stack the custom block will be using.
+#
+# the list stack_ptrs stores the pointers to the beginning of each stack.
+# the list stack_heads stores the pointers to the head of each stack.
+#
+# the first item of each stack (aka the item directly at a stack's stack_ptr)
+# is a special value. it represents the pointer to the start of a current stack frame.
+# functionally inspired by the usage of the EBP register on x86 architecture.
+#
+# == STACK FRAMES ==
+# one stack frame stores the data for a single function call.
+# 
+# item 0 of each stack frame is the base of the previous stack frame,
+# followed by values of declared variables,
+# then finally followed by any temporary stack frame.
+#
+# -- Return values --
+# return values are handled by first allocating some memory by the caller
+# that's equivalent to the size of the returned value. (changing the stack ptr)
+# then, when the callee wants to return the value, it sets the data starting from the address
+# at the pointer of its stack base minus the size of the returned value, thus matching up with
+# the space allocated by the caller before the function call. then, the stack frame of the callee gets cleaned up.
+# by the callee.
+#
+# -- Function arguments --
+# function arguments are passed to called functions by pushing values to the stack before the
+# return value allocation. arguments will then be accessed by the caller from negative offsets of its
+# stack base.
 
 # user function prefix: "_"
 # internal function prefix: "internal_"
@@ -91,6 +128,8 @@ proc internal_alloc_stack {
 # for some reason goboscript macros crashed?
 # this is probably the worst software i've decided to work with.
 # so i've just decided to make functions to inject them manually.
+
+# offset 0 should always be the base of the previous stack frame
 def macro_get_from_stack_base(offset):
     return f"memory[memory[stack_ptrs[$stack_id]] + ({offset})]"
 
@@ -144,34 +183,62 @@ class FunctionContext:
             if v['name'] == var_name:
                 return v['offset']
 
-def generate_expression(ctx, expr):
+class ExpressionStack:
+    def __init__(self):
+        self.stack_size = 0
+
+    def push(self):
+        v = self.stack_size
+        self.stack_size += 1
+        return v
+    
+    def clear(self, file):
+        if self.stack_size > 0:
+            file.write(macro_stack_pop(self.stack_size) + '\n')
+    
+    def _re_replace(self, m):
+        return macro_stack_read(self.stack_size - int(m.group(1)))
+    
+    def finalize_stack_references(self, v):
+        return re.sub(r'@<(\d+)>', self._re_replace, v)
+
+def generate_func_call(ctx, func_data):
+    file = ctx.sprite_ctx.file
+    func_return_type = func_data.type
+
+    # allocate space for return value, if needed
+    if not func_return_type.is_a(ValueType.VOID):
+        file.write(f"stack_heads[$stack_id] = stack_heads[$stack_id] + {gs_literal(func_return_type.size())};\n")
+    
+    # proc call
+    file.write(ctx.sprite_ctx.function_block_names[func_data.name] + ' $stack_id;\n')
+
+def generate_expression(ctx, expr, stack):
     if expr.op == 'const':
-        ctx.sprite_ctx.file.write(macro_stack_push(gs_literal(expr.value)))
+        return gs_literal(expr.value)
+
+    elif expr.op == 'var_get':
+        return macro_get_from_stack_base(ctx.get_variable_offset(expr.id) + 1)
+    
+    elif expr.op == 'func_call':
+        generate_func_call(ctx, ctx.sprite_ctx.program['functions'][expr.id])
+        return "@<" + str(stack.push()) + ">"
 
     elif isinstance(expr, BinaryOperator):
-        generate_expression(ctx, expr.left)
-        generate_expression(ctx, expr.right)
-        file = ctx.sprite_ctx.file
+        val_a = generate_expression(ctx, expr.left, stack)
+        val_b = generate_expression(ctx, expr.right, stack)
 
         if expr.op == 'op_add':
-            file.write('temp = ' + macro_stack_read(1) + ' + ' + macro_stack_read(0) + ';\n')
-            file.write(macro_stack_pop(2))
-            file.write(macro_stack_push('temp'))
+            return f"({val_a} + {val_b})"
 
         elif expr.op == 'op_sub':
-            file.write('temp = ' + macro_stack_read(1) + ' - ' + macro_stack_read(0) + ';\n')
-            file.write(macro_stack_pop(2))
-            file.write(macro_stack_push('temp'))
+            return f"({val_a} - {val_b})"
         
         elif expr.op == 'op_mul':
-            file.write('temp = ' + macro_stack_read(1) + ' * ' + macro_stack_read(0) + ';\n')
-            file.write(macro_stack_pop(2))
-            file.write(macro_stack_push('temp'))
+            return f"({val_a} * {val_b})"
         
         elif expr.op == 'op_div':
-            file.write('temp = ' + macro_stack_read(1) + ' / ' + macro_stack_read(0) + ';\n')
-            file.write(macro_stack_pop(2))
-            file.write(macro_stack_push('temp'))
+            return f"({val_a} / {val_b})"
         
         else:
             raise Exception('unknown opcode ' + expr.op)
@@ -183,11 +250,14 @@ def generate_expression(ctx, expr):
 def generate_block(ctx, block):
     file = ctx.sprite_ctx.file
 
+    file.write("# block start\n")
+
     # parse statement
     scope_size = 0
     declared_variables = []
 
     for statement in block.statements:
+        # opcode var_declare
         if statement['type'] == 'var_declare':
             var_name = statement['var_name']
             declared_variables.append(var_name)
@@ -197,19 +267,53 @@ def generate_block(ctx, block):
             file.write(f'# {var_name} declaration \n')
 
             if statement['init'] != None:
-                generate_expression(ctx, statement['init'])
+                expr_stack = ExpressionStack()
+                expr = expr_stack.finalize_stack_references(generate_expression(ctx, statement['init'], expr_stack))
+
+                if expr_stack.stack_size > 0:
+                    file.write(f"temp = {expr};\n")
+                    expr_stack.clear(file)
+                    file.write(macro_stack_push("temp") + "\n")
+                else:
+                    file.write(macro_stack_push(expr) + "\n")
             else:
-                file.write(macro_stack_push('\"\"'))        
+                file.write(macro_stack_push('\"\"'))
+        
+        # opcode func_call
+        elif statement['type'] == 'func_call':
+            func_data = ctx.sprite_ctx.program['functions'][statement['func_name']]
+            generate_func_call(ctx, func_data)
+
+            # drop return value if it exists
+            if not func_data.type.is_a(ValueType.VOID):
+                file.write(macro_stack_pop(gs_literal(func_data.type.size())))
 
     # end of function
-    for var_name in declared_variables:
-        ctx.remove_variable(var_name)
+    if declared_variables:
+        for var_name in declared_variables:
+            ctx.remove_variable(var_name)
+        
+        file.write(macro_stack_pop(scope_size))
     
-    file.write(macro_stack_pop(scope_size))
+    file.write("# block end\n")
     
 # assumes that there is a argument named stack_id
 def generate_procedure(func_ctx, definition):
+    file = func_ctx.sprite_ctx.file
+
+    # stack frame enter
+    file.write("# stack frame enter\n")
+    file.write(macro_stack_push("memory[stack_ptrs[$stack_id]]")) # push old frame body
+    file.write("memory[stack_ptrs[$stack_id]] = stack_heads[$stack_id];\n") # set current frame body to stack head
+
+    file.write("# function definition follows\n")
     generate_block(func_ctx, definition)
+
+    # stack frame end
+    file.write("\n# stack frame end\n")
+    file.write("temp = " + macro_get_from_stack_base(0) + ";\n")
+    file.write(macro_stack_pop(1) + "\n") # pop base of current stack frame
+    file.write("memory[stack_ptrs[$stack_id]] = temp;\n") # restore base of old stack frame
 
 def generate_program(program, file):
     sprite_ctx = SpriteContext(program, file)
