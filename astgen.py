@@ -413,18 +413,39 @@ def parse_block(program, tokens, parent_block=None):
             if not does_return:
                 block.statements.append(statement)
         
-        # function call
         # since there is no expression-as-statement functionality (partly due to the lack of semicolons)
-        # function call statements have to be specifically programmed
+        # function call and variable assignment statements have to be specifically programmed
         elif tok.type == Token.TYPE_IDENTIFIER:
-            func_call_data = parse_function_call(program, tokens, block, tok)
+            # variable assignment
+            if tokens.peek().is_symbol('='):
+                var_name = tok.get_identifier()
+                var_type = block.get_variable_info(var_name)['type']
 
-            if not does_return:
-                block.statements.append({
-                    'type': 'builtin_func_call' if func_call_data['builtin'] else 'func_call',
-                    'func_name': func_call_data['function'].name,
-                    'args': func_call_data['args']
-                })
+                # pop equals sign
+                tokens.pop()
+
+                # read expression
+                expr = parse_expression(program, tokens, block)
+                if not expr.type.is_same(var_type):
+                    raise CompilationException.from_token(tok, f"attempt to assign a {str(expr.type)} to a {str(var_type)}")
+                statement = {
+                    'type': 'var_assign',
+                    'var_name': var_name,
+                    'value': expr
+                }
+                print("EXPR: " + str(expr))
+                
+                if not does_return:
+                    block.statements.append(statement)
+            else:
+                func_call_data = parse_function_call(program, tokens, block, tok)
+
+                if not does_return:
+                    block.statements.append({
+                        'type': 'builtin_func_call' if func_call_data['builtin'] else 'func_call',
+                        'func_name': func_call_data['function'].name,
+                        'args': func_call_data['args']
+                    })
         
         else:
             raise CompilationException.from_token(tok, "unexpected " + str(tok))

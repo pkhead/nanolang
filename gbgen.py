@@ -361,6 +361,23 @@ def generate_block(ctx, block):
             # no initialization expression; initialize to an empty string
             else:
                 file.write(macro_stack_push('\"\"') + "\n")
+            
+        # opcode var_assign
+        if statement['type'] == 'var_assign':
+            var_name = statement['var_name']
+            write_offset = ctx.get_variable_offset(var_name)
+            
+            expr_stack = ExpressionStack()
+            expr = expr_stack.finalize_stack_references(generate_expression(ctx, statement['value'], expr_stack))
+
+            # set variable to expression result and clear
+            # values added to the stack by the expression (if present)
+            if expr_stack.stack_size > 0:
+                file.write(f"temp = {expr};\n")
+                expr_stack.clear(file)
+                file.write(macro_set_from_stack_base(write_offset, "temp") + "\n")
+            else:
+                file.write(macro_set_from_stack_base(write_offset, expr) + "\n")
         
         # opcode func_call
         elif statement['type'] == 'func_call':

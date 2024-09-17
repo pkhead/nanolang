@@ -55,5 +55,9 @@ end
 
 @nowarp
 on flag
-    sprite_say_wait("Hello, " & ask(string(some_number())) & "!", 2)
+    var num: number
+    sprite_say_wait(string(num), 2)
+    num = 10
+    sprite_say_wait(string(num), 2)
+    # sprite_say_wait("Hello, " & ask(string(some_number())) & "!", 2)
 end

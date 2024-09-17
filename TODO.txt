@@ -1,5 +1,10 @@
-- function arguments
-- implement return values
-- sprite_say, sprite_say_wait
-- variable type inference
 - control flow
+- variable type inference
+
+- assigning to temp here does not work with structs:
+- if expr_stack.stack_size > 0:
+        file.write(f"temp = {expr};\n")
+        expr_stack.clear(file)
+        file.write(macro_set_from_stack_base(write_offset, "temp") + "\n")
+    else:
+        file.write(macro_set_from_stack_base(write_offset, expr) + "\n")
