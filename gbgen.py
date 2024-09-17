@@ -84,12 +84,13 @@ onflag {
 proc internal_alloc_stack {
     local i = 1;
     stack_pos = 0;
+    init_stack_ret = "error";
 
     repeat length stack_ptrs + 1 {
         if stack_ptrs[i] == "" {
             stack_pos = (i-1) * 1024 + 1;
 
-            if i == length stack_ptrs + 1 {
+            if i > length stack_ptrs {
                 add stack_pos to stack_ptrs;
                 add stack_pos to stack_heads;
             } else {
@@ -111,8 +112,6 @@ proc internal_alloc_stack {
 
         i += 1;
     }
-
-    init_stack_ret = "error";
 }
 
 # macro get_from_stack_base!(stack_id, offset) -> memory[memory[stack_ptrs[stack_id!]] + offset!];
@@ -198,10 +197,11 @@ class FunctionContext:
         self._offset += size
     
     def remove_variable(self, var_name):
-        for v in self.active_variables:
+        for i in range(len(self.active_variables)):
+            v = self.active_variables[i]
             if v['name'] == var_name:
                 self._offset -= v['size']
-                del v
+                del self.active_variables[i]
                 return
         
         raise Exception('could not find variable ' + var_name)
@@ -309,28 +309,44 @@ def generate_expression(ctx, expr, stack):
     elif expr.op == 'op_neg':
         value = generate_expression(ctx, expr.expr, stack)
         return f"-({value})"
+    
+    elif expr.op == 'op_bnot':
+        value = generate_expression(ctx, expr.expr, stack)
+        return f"!({value})"
 
     elif isinstance(expr, BinaryOperator):
         val_a = generate_expression(ctx, expr.left, stack)
         val_b = generate_expression(ctx, expr.right, stack)
 
-        if expr.op == 'op_add':
-            return f"({val_a} + {val_b})"
-
-        elif expr.op == 'op_sub':
-            return f"({val_a} - {val_b})"
-        
-        elif expr.op == 'op_mul':
-            return f"({val_a} * {val_b})"
-        
-        elif expr.op == 'op_div':
-            return f"({val_a} / {val_b})"        
-        
-        elif expr.op == 'op_join':
-            return f"({val_a} & {val_b})"
-        
-        else:
-            raise Exception('unknown opcode ' + expr.op)
+        match expr.op:
+            case 'op_add':
+                return f"({val_a} + {val_b})"
+            case 'op_sub':
+                return f"({val_a} - {val_b})"
+            case 'op_mul':
+                return f"({val_a} * {val_b})"
+            case 'op_div':
+                return f"({val_a} / {val_b})"  
+            case 'op_join':
+                return f"({val_a} & {val_b})"
+            case 'op_bor':
+                return f"({val_a} || {val_b})"
+            case 'op_band':
+                return f"({val_a} && {val_b})"
+            case 'op_eq':
+                return f"({val_a} == {val_b})"
+            case 'op_neq':
+                return f"!({val_a} == {val_b})"
+            case 'op_lt':
+                return f"({val_a} < {val_b})"
+            case 'op_gt':
+                return f"({val_a} > {val_b})"
+            case 'op_lte':
+                return f"!({val_a} > {val_b})"
+            case 'op_gte':
+                return f"!({val_a} < {val_b})"
+            case _:
+                raise Exception('unknown opcode ' + expr.op)
     
     else:
         raise Exception('unknown opcode ' + expr.op)

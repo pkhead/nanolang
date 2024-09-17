@@ -55,12 +55,14 @@ end
 
 @nowarp
 on flag
-    if true
-        sprite_say_wait("yes", 2)
-    elseif false
-        sprite_say_wait("no", 2)
+    var num = number(ask("guess!"))
+    var str = "wrong!"
+
+    if num == 0
+        var str = "correct!"
+        sprite_say_wait(str, 2)
     else
-        sprite_say_wait("idk", 2)
+        sprite_say_wait(str, 2)
     end
 
     # var num: number = 100

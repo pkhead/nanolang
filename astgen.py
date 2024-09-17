@@ -102,8 +102,8 @@ class Function:
 ATTRIBUTES = ['nowarp']
 EVENT_NAMES = ['flag', 'keypress']
 
-COMPARISON_SYMBOLS = ['<', '>', '<=', '>=', '!=', '==']
-COMPARISON_SYMBOL_NAMES = ['op_lt', 'op_gt', 'op_lte', 'op_gte', 'op_neq', 'op_eq']
+COMPARISON_SYMBOLS = ['<', '>', '<=', '>=']
+COMPARISON_SYMBOL_NAMES = ['op_lt', 'op_gt', 'op_lte', 'op_gte']
 
 ARITHMETIC_SYMBOLS = ['+', '-', '*', '/']
 ARITHMETIC_SYMBOLS_NAMES = ['op_add', 'op_sub', 'op_mul', 'op_div']
@@ -185,15 +185,60 @@ def parse_expression(program, tokens, block, order=0):
     # order 7: not - (unary)
     # last order: func call, array subscript, struct member access, parentheses, raw values
 
-    # FOR NOW:
-    # order 0: & (string concatenation)
-    # order 1: + -
-    # order 2: * /
-    # + last order
-
     next_order = order+1
 
-    if order == 0: # &
+    if order == 0:
+        a = parse_expression(program, tokens, block, next_order)
+        op_tok = tokens.peek()
+        while op_tok.is_symbol('||'):
+            tokens.pop()
+            b = parse_expression(program, tokens, block, next_order)
+
+            a = type_cast(program, op_tok, a, ValueType(ValueType.BOOL))
+            b = type_cast(program, op_tok, b, ValueType(ValueType.BOOL))
+            a = BinaryOperator('op_bor', ValueType(ValueType.STRING), a, b)
+            op_tok = tokens.peek()
+        return a
+    
+    elif order == 1:
+        a = parse_expression(program, tokens, block, next_order)
+        op_tok = tokens.peek()
+        while op_tok.is_symbol('&&'):
+            tokens.pop()
+            b = parse_expression(program, tokens, block, next_order)
+
+            a = type_cast(program, op_tok, a, ValueType(ValueType.BOOL))
+            b = type_cast(program, op_tok, b, ValueType(ValueType.BOOL))
+            a = BinaryOperator('op_band', ValueType(ValueType.STRING), a, b)
+            op_tok = tokens.peek()
+        return a
+    
+    elif order == 2:
+        a = parse_expression(program, tokens, block, next_order)
+        op_tok = tokens.peek()
+        while op_tok.is_symbol('==') or op_tok.is_symbol('!='):
+            tokens.pop()
+            b = parse_expression(program, tokens, block, next_order)
+            b = type_cast(program, op_tok, b, a.type)
+
+            a = BinaryOperator('op_eq' if op_tok.value == '==' else 'op_neq', ValueType(ValueType.BOOL), a, b)
+            op_tok = tokens.peek()
+        return a
+    
+    elif order == 3:
+        a = parse_expression(program, tokens, block, next_order)
+        op_tok = tokens.peek()
+        while op_tok.type == Token.TYPE_SYMBOL and op_tok.value in COMPARISON_SYMBOLS:
+            tokens.pop()
+            b = parse_expression(program, tokens, block, next_order)
+            b = type_cast(program, op_tok, b, a.type)
+
+            op_name = COMPARISON_SYMBOL_NAMES[COMPARISON_SYMBOLS.index(op_tok.value)]
+            a = BinaryOperator(op_name, ValueType(ValueType.STRING), a, b)
+            op_tok = tokens.peek()
+        return a
+
+    elif order == 4: # &
         a = parse_expression(program, tokens, block, next_order)
         op_tok = tokens.peek()
         while op_tok.is_symbol('&'):
@@ -210,7 +255,7 @@ def parse_expression(program, tokens, block, order=0):
         
         return a
 
-    elif order == 1: # + -
+    elif order == 5: # + -
         a = parse_expression(program, tokens, block, next_order)
         op_tok = tokens.peek()
         while op_tok.is_symbol('+') or op_tok.is_symbol('-'):
@@ -225,7 +270,7 @@ def parse_expression(program, tokens, block, order=0):
         
         return a
     
-    elif order == 2: # * /
+    elif order == 6: # * /
         a = parse_expression(program, tokens, block, next_order)
         op_tok = tokens.peek()
         while op_tok.is_symbol('*') or op_tok.is_symbol('/'):
@@ -256,6 +301,12 @@ def parse_expression(program, tokens, block, order=0):
             tokens.pop()
             expr = parse_expression(program, tokens, block, order)
             return UnaryOperator('op_neg', expr.type, expr)
+
+        # binary not
+        elif tok.is_symbol('!'):
+            tokens.pop()
+            expr = parse_expression(program, tokens, block, order)
+            return UnaryOperator('op_bnot', ValueType(ValueType.BOOL), expr)
         
         # type cast
         elif tok.type == Token.TYPE_KEYWORD and tok.value in Token.KEYWORD_TYPES:
@@ -367,6 +418,7 @@ def parse_if_branch(program, tokens, block):
 
     tok = tokens.peek()
     cond_expr = type_cast(program, tok, parse_expression(program, tokens, block), ValueType(ValueType.BOOL))
+    print("EXPR: " + str(cond_expr))
     if_branch = parse_branch(program, tokens, block, True)
     else_branch = None
     block_end = tokens.pop()
