@@ -1,0 +1,38 @@
+costume "alien-in-suit.png"
+
+when flag
+    goto_xy(0, 0)
+    var xv = 0
+    var yv = 0
+
+    while true
+        yv -= 1
+
+        if key_pressed("right arrow")
+            change_x(10)
+            say("test")
+        elseif key_pressed("left arrow")
+            change_x(-10)
+        end
+
+        if key_pressed("space"):
+            yv = 10
+
+        change_y(yv)
+
+        if get_y() < 0
+            set_y(0)
+            yv = 0
+        end
+    end
+end
+
+when keypressed("space")
+    create_clone()
+end
+
+when cloned
+    say("hello, world!")
+    wait(1)
+    deleteclone
+end
