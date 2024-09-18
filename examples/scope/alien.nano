@@ -1,0 +1,14 @@
+# demonstration of scoping for local variables
+
+costume "../alien-in-suit.png"
+
+when flag
+    var my_var = "original variable"
+
+    if true
+        var my_var = "shadowing variable"
+        say_wait(my_var, 2)
+    end
+
+    say_wait(my_var, 2)
+end

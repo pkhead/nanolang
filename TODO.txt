@@ -11,3 +11,7 @@
         file.write(macro_set_from_stack_base(write_offset, "temp") + "\n")
     else:
         file.write(macro_set_from_stack_base(write_offset, expr) + "\n")
+
+
+- structs
+- stack arrays

@@ -1,10 +1,10 @@
-costume "alien-in-suit.png"
-
 # memory inspector
 # left & right arrow to change inspected memory location
 # space to enter command
 #   exit: stop program
 #   set:  set location
+
+costume "../alien-in-suit.png"
 
 when flag
     var test_alloc_len = 5
@@ -44,38 +44,3 @@ when flag
     free(void* (test_alloc))
     say_wait("exit", 1)
 end
-
-# when flag
-#     goto_xy(0, 0)
-#     var xv = 0
-#     var yv = 0
-# 
-#     while !key_pressed("space") end
-#     say_wait("Hello!", 2)
-# 
-#     var test_alloc = number* (malloc(5))
-#     test_alloc[0] = 3
-#     var temp = test_alloc[0]
-#     say_wait(string(temp), 2)
-# 
-#     while true
-#         yv -= 1
-# 
-#         if key_pressed("right arrow")
-#             change_x(10)
-#             say("test")
-#         elseif key_pressed("left arrow")
-#             change_x(-10)
-#         end
-# 
-#         if key_pressed("space"):
-#             yv = 10
-# 
-#         change_y(yv)
-# 
-#         if get_y() < 0
-#             set_y(0)
-#             yv = 0
-#         end
-#     end
-# end

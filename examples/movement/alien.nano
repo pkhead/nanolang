@@ -1,0 +1,34 @@
+# left/right to move alien
+# space to jump
+
+costume "../alien-in-suit.png"
+
+when flag
+    goto_xy(0, 0)
+    var xv = 0
+    var yv = 0
+
+    forever # can also put while true -- they compile equivalently
+        var grounded = false
+
+        yv -= 1
+        change_y(yv)
+
+        if get_y() < -40
+            grounded = true
+            set_y(-40)
+            yv = 0
+        end
+
+        # goboscript does not seem to compile the and operator correctly.
+        # great. Luckily I thought of a workaround.
+        if grounded: if key_pressed("space"):
+            yv = 10
+
+        if key_pressed("right arrow")
+            change_x(10)
+        elseif key_pressed("left arrow")
+            change_x(-10)
+        end
+    end
+end

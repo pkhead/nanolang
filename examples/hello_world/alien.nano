@@ -1,0 +1,5 @@
+costume "../alien-in-suit.png"
+
+when flag
+    say("Hello, world!")
+end

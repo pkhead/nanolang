@@ -1,0 +1,21 @@
+costume "../alien-in-suit.png"
+
+@warp
+func fibonacci(n: number): number
+    if n == 0 || n == 1
+        return n
+    else
+        return fibonacci(n-1) + fibonacci(n-2)
+    end
+end
+
+func main(): void
+    while true # gets compiled into a forever loop
+        var index = number( ask("enter index into fibonacci sequence:") )
+        say_wait(fibonacci(index), 3.0)
+    end
+end
+
+when flag
+    main()
+end
