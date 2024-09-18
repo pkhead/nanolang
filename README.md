@@ -4,7 +4,7 @@ but it works!
 
 written in python, because i'm lazy. very early in development.
 
-feature list (barely implemented):
+feature list:
 - local variables
 - functions with return values
 - pointer access
@@ -34,3 +34,6 @@ nanolang examples/hello_world -o hello_world
 > [!NOTE]
 > calling nanolang from the source repository actually creates an error.
 > substitute `nanolang` with `python .`.
+
+### language documentation
+haven't made comprehensive documentation yet. check out the [code examples](examples). also, all built-in methods are listed in [this neatly organized code file](builtin_methods.py)

@@ -1,6 +1,6 @@
 costume "../alien-in-suit.png"
 
-@warp
+@warp # ticks "Run without screen refresh"
 func fibonacci(n: number): number
     if n == 0 || n == 1
         return n
@@ -17,5 +17,7 @@ func main(): void
 end
 
 when flag
+    # having main be a separate function is a bit unnecessary, but
+    # i just wanted to show that it works.
     main()
 end
