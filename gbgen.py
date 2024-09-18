@@ -439,7 +439,7 @@ def generate_statement(ctx, statement, scope):
     # opcode func_call
     elif opcode == 'func_call':
         func_data = ctx.sprite_ctx.program['functions'][statement['func_name']]
-        generate_func_call(ctx, func_data)
+        generate_func_call(ctx, func_data, statement['args'])
 
         # drop return value if it exists
         if not func_data.type.is_void():
@@ -632,11 +632,24 @@ def generate_program(program, file):
         event_id += 1
 
         event_name = event_handler['event_name']
+        event_param = event_handler['event_param']
         
         if event_name == 'flag':
             file.write("onflag")
-        elif event_name == 'keypress':
-            raise Exception("unimplemented")
+        elif event_name == 'keypressed':
+            file.write("onkey " + gs_literal(event_param))
+        elif event_name == 'clicked':
+            file.write("onclick " + gs_literal(event_param))
+        elif event_name == 'backdrop_switched':
+            file.write("onbackdrop " + gs_literal(event_param))
+        elif event_name == 'loudness_exceeds':
+            file.write("onloudness " + gs_literal(event_param))
+        elif event_name == 'timer_exceeds':
+            file.write("ontimer " + gs_literal(event_param))
+        elif event_name == 'broadcast':
+            file.write("on " + gs_literal(event_param))
+        elif event_name == 'cloned':
+            file.write("onclone")
         else:
             raise Exception(f"internal: invalid event {event_name}")
         

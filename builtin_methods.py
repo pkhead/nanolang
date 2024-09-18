@@ -109,7 +109,7 @@ BUILTIN_METHODS = _func([
 
     # LOOKS
     BuiltinFunction(
-        name='say_for_secs',
+        name='say_wait',
         type='void',
         params=['string', 'number'],
         generate=lambda args: f"say {(args[0])}, {(args[1])};"
@@ -123,7 +123,7 @@ BUILTIN_METHODS = _func([
     ),
 
     BuiltinFunction(
-        name='think_for_secs',
+        name='think_wait',
         type='void',
         params=['string', 'number'],
         generate=lambda args: f"think {(args[0])}, {(args[1])};"
@@ -209,6 +209,54 @@ BUILTIN_METHODS = _func([
     # SOUND
 
     # CONTROL
+    BuiltinFunction(
+        name='wait',
+        type='void',
+        params=['number'],
+        generate=lambda args: f"wait {(args[0])};"
+    ),
+
+    BuiltinFunction(
+        name='wait_until',
+        type='void',
+        params=['bool'],
+        generate=lambda args: f"wait_until {(args[0])};"
+    ),
+
+    BuiltinFunction(
+        name='create_clone',
+        type='void',
+        params=[],
+        generate=lambda args: f"clone;"
+    ),
+
+    BuiltinFunction(
+        name='create_clone_of',
+        type='void',
+        params=['string'],
+        generate=lambda args: f"clone {(args[0])};"
+    ),
+
+    BuiltinFunction(
+        name='stop_all',
+        type='void',
+        params=[],
+        generate=lambda args: f"stop_all;"
+    ),
+
+    BuiltinFunction(
+        name='stop_other_scripts',
+        type='void',
+        params=[],
+        generate=lambda args: f"stop_other_scripts;"
+    ),
+
+    BuiltinFunction(
+        name='delete_clone',
+        type='void',
+        params=[],
+        generate=lambda args: f"delete_this_clone;"
+    ),
 
     # SENSING
     BuiltinFunction(

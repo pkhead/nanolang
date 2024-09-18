@@ -35,10 +35,19 @@ class Block:
         else:
             return None if self.parent == None else self.parent.get_variable_info(var_name)
 
-class ExpressionConstant:
+class ExpressionNode:
+    def __init__(self):
+        self._const = False
+    
+    def is_const(self):
+        return self._const
+
+class ExpressionConstant(ExpressionNode):
     def __init__(self, tok):
+        super().__init__()
         self.token = tok
         self.op = 'const'
+        self._const = True
         
         if tok.type == Token.TYPE_NUMBER:
             self.type = ValueType(ValueType.NUMBER)
@@ -62,34 +71,102 @@ class ExpressionConstant:
     def __str__(self):
         return f"const<{self.type}>({str(self.value)})"
     
-class BinaryOperator:
+    def eval(self):
+        return self.value
+    
+class BinaryOperator(ExpressionNode):
     def __init__(self, op, type, a, b):
+        super().__init__()
         self.op = op
         self.type = type
         self.left = a
         self.right = b
+        self._const = self.left.is_const() and self.right.is_const()
     
     def __str__(self):
         return f'{(self.op)}<{self.type}>({str(self.left)}, {str(self.right)})'
+    
+    def eval(self):
+        a = self.left.eval()
+        b = self.right.eval()
 
-class UnaryOperator:
+        match self.op:
+            case 'op_add':
+                return a + b
+            case 'op_sub':
+                return a - b
+            case 'op_mul':
+                return a * b
+            case 'op_div':
+                return a / b
+            case 'op_join':
+                return a + b
+            case 'op_bor':
+                return a or b
+            case 'op_band':
+                return a and b
+            case 'op_eq':
+                return a == b
+            case 'op_neq':
+                return a != b
+            case 'op_lt':
+                return a < b
+            case 'op_gt':
+                return a > b
+            case 'op_lte':
+                return a <= b
+            case 'op_gte':
+                return a >= b
+            case _:
+                raise Exception('unknown opcode ' + self.op)
+
+class UnaryOperator(ExpressionNode):
     def __init__(self, op, type, expr):
+        super().__init__()
         self.op = op
         self.type = type
         self.expr = expr
+        self._const = expr.is_const()
     
     def __str__(self):
         return f'{(self.op)}<{self.type}>({str(self.expr)})'
+    
+    def eval(self):
+        v = self.expr.eval()
 
-class IdentifierOperator:
+        match self.op:
+            case 'op_cast':
+                match self.type.type:
+                    case ValueType.NUMBER:
+                        return float(v)
+                    case ValueType.STRING:
+                        return str(v)
+                    case ValueType.BOOL:
+                        return bool(v)
+                    case ValueType.POINTER:
+                        return int(v)
+                    case _:
+                        raise Exception("error while evaluating compile-time expression: invalid value type")
+            
+            case 'op_neg':
+                return -v
+            case 'op_bnot':
+                return not v
+
+class IdentifierOperator(ExpressionNode):
     def __init__(self, op, type, id, data=None):
+        super().__init__()
         self.op = op
         self.type = type
         self.id = id
         self.data = data
+        self._const = False
     
     def __str__(self):
         return f'{(self.op)}<{self.type}>(<{self.id}>, {str(self.data)})'
+    
+    def eval(self):
+        raise Exception("cannot evaluate identifier node")
 
 class Function:
     def __init__(self, name, type, params, attribs):
@@ -100,7 +177,16 @@ class Function:
         self.attributes = attribs
 
 ATTRIBUTES = ['warp']
-EVENT_NAMES = ['flag', 'keypress']
+HAT_EVENTS = {
+    'flag': None,
+    'keypressed': 'string',
+    'clicked': None,
+    'backdrop_switched': 'string',
+    'loudness_exceeds': 'number',
+    'timer_exceeds': 'number',
+    'broadcast': 'string',
+    'cloned': None
+}
 
 COMPARISON_SYMBOLS = ['<', '>', '<=', '>=']
 COMPARISON_SYMBOL_NAMES = ['op_lt', 'op_gt', 'op_lte', 'op_gte']
@@ -524,11 +610,18 @@ def parse_statement(program, tokens, block):
         cond_expr = type_cast(program, tok, parse_expression(program, tokens, block), ValueType(ValueType.BOOL))
         branch = parse_branch(program, tokens, block)
 
-        return {
-            'type': 'while',
-            'cond': cond_expr,
-            'branch': branch
-        }
+        # while true loops get converted to forever loops
+        if cond_expr.is_const() and cond_expr.eval() == True:
+            return {
+                'type': 'forever',
+                'branch': branch
+            }
+        else:
+            return {
+                'type': 'while',
+                'cond': cond_expr,
+                'branch': branch
+            }
     
     elif tok.is_keyword('repeat'):
         count_expr = type_cast(program, tok, parse_expression(program, tokens, block), ValueType(ValueType.NUMBER))
@@ -707,17 +800,41 @@ def parse_program(tokens):
             attributes.clear()
         
         # event handler
-        elif tok.is_keyword('on'):
+        elif tok.is_keyword('when'):
             tok = tokens.pop()
             event_name = tok.get_identifier()
-            if not event_name in EVENT_NAMES:
+            if not event_name in HAT_EVENTS:
                 raise CompilationException.from_token(tok, f"invalid event '{event_name}'")
+            
+            event_param_type = HAT_EVENTS[event_name]
+            event_param = None
+
+            # read event parameter
+            if event_param_type != None:
+                if not tokens.pop().is_symbol('('):
+                    raise CompilationException.from_token(tok, f"event '{event_name}' needs parameters")
+
+                # get event parameter expression, and make sure it's a compile-time constant
+                # and that it is the required type
+                param_expr = parse_expression(program, tokens, None)
+                if not param_expr.is_const():
+                    raise CompilationException.from_token(tok, f"event parameter must be a constant expression")
+                
+                if not param_expr.type.is_same(ValueType.from_string(event_param_type)):
+                    raise CompilationException.from_token(tok, f"expected {event_param_type} for event parameter, got {str(param_expr.type)}")
+                
+                event_param = param_expr.eval()
+
+                if not tokens.peek().is_symbol(')'):
+                    raise CompilationException.from_token(tokens.peek(), f"expected ')'")
+                tokens.pop()
             
             parent_block = Block()
             parent_block.return_type = ValueType(ValueType.VOID)
 
             program['events'].append({
                 'event_name': event_name,
+                'event_param': event_param,
                 'definition': parse_block(program, tokens, parent_block),
                 'attributes': attributes[:]
             })

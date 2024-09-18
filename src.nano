@@ -49,12 +49,12 @@ costume "alien-in-suit.png"
 #     return a + b
 # end
 
-on flag
+when flag
     goto_xy(0, 0)
     var xv = 0
     var yv = 0
 
-    forever
+    while true
         yv = yv - 1
 
         if key_pressed("right arrow")
@@ -74,4 +74,14 @@ on flag
             yv = 0
         end
     end
+end
+
+when keypressed("space")
+    create_clone()
+end
+
+when cloned
+    say("hello, world!")
+    wait(1)
+    delete_clone()
 end
