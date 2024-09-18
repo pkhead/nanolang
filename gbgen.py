@@ -432,7 +432,12 @@ def generate_expression(ctx, expr, stack):
     
     elif expr.op == 'op_bnot':
         value = generate_expression(ctx, expr.expr, stack)
-        return f"!({value})"
+        return f"({value} == 0)" # for some reason, not (expr) breaks project and !(expr) doesn't emit a not statement.
+
+    elif expr.op == 'op_index':
+        value = generate_expression(ctx, expr.data, stack)
+        var_value = macro_get_from_stack_base(ctx.get_variable_offset(expr.id))
+        return f"memory[{var_value} + {value}]"
 
     elif isinstance(expr, BinaryOperator):
         val_a = generate_expression(ctx, expr.left, stack)
@@ -456,15 +461,15 @@ def generate_expression(ctx, expr, stack):
             case 'op_eq':
                 return f"({val_a} == {val_b})"
             case 'op_neq':
-                return f"not ({val_a} == {val_b})"
+                return f"({val_a} != {val_b})"
             case 'op_lt':
                 return f"({val_a} < {val_b})"
             case 'op_gt':
                 return f"({val_a} > {val_b})"
             case 'op_lte':
-                return f"not ({val_a} > {val_b})"
+                return f"({val_a} <= {val_b})"
             case 'op_gte':
-                return f"not ({val_a} < {val_b})"
+                return f"({val_a} >= {val_b})"
             case _:
                 raise Exception('unknown opcode ' + expr.op)
     
@@ -495,6 +500,17 @@ def generate_branch(ctx, scope, branch):
     if branch['single']: generate_statement(ctx, branch['branch'], scope)
     else: generate_block(ctx, branch['branch'])
 
+def get_assignment_location(ctx, loc, expr_stack, assignment):
+    if assignment['type'] == 'set' or assignment['type'] == 'inc':
+        return [loc, assignment['type'], assignment['value']]
+    
+    elif assignment['type'] == 'index':
+        expr = generate_expression(ctx, assignment['index'], expr_stack)
+        res = get_assignment_location(ctx, f"(memory[{loc}] + {expr})", expr_stack, assignment['assignment'])
+        return res
+    else:
+        raise Exception("unknown assignment type " + assignment['type'])
+
 def generate_statement(ctx, statement, scope):
     file = ctx.sprite_ctx.file
     opcode = statement['type']
@@ -516,29 +532,39 @@ def generate_statement(ctx, statement, scope):
             file.write(macro_stack_push('\"\"') + "\n")
         
     # opcode var_assign
-    elif opcode == 'var_assign' or opcode == 'var_increment':
+    elif opcode == 'var_assign':
         var_name = statement['var_name']
-        write_offset = ctx.get_variable_offset(var_name)
-        
+        var_offset = ctx.get_variable_offset(var_name)
         expr_stack = ExpressionStack()
-        expr = expr_stack.finalize_stack_references(generate_expression(ctx, statement['value'], expr_stack))
+
+        assignment = get_assignment_location(ctx, f"(memory[stack_ptrs[$stack_id]] + ({(var_offset)}))", expr_stack, statement['assignment'])
+
+        location = assignment[0]
+        assign_type = assignment[1]
+        assign_value = assignment[2]
+        
+        expr = generate_expression(ctx, assign_value, expr_stack)
+        location = expr_stack.finalize_stack_references(location)
+        expr = expr_stack.finalize_stack_references(expr)
 
         # set variable to expression result and clear
         # values added to the stack by the expression (if present)
         if expr_stack.stack_size > 0:
             file.write(f"temp = {expr};\n")
+            
+            if assign_type == 'inc':
+                file.write(f"temp += memory[{location}]")
+            
+            file.write(f"memory[{location}] = temp;\n")
             expr_stack.clear(file)
-            
-            if opcode == 'var_increment':
-                file.write(f"temp += {macro_get_from_stack_base(write_offset)}")
-            
-            file.write(macro_set_from_stack_base(write_offset, "temp") + "\n")
-        elif opcode == 'var_increment':
-            file.write(macro_set_from_stack_base(
-                write_offset, f"(({(macro_get_from_stack_base(write_offset))}) + ({expr}))"
-            ) + "\n")
-        else:
-            file.write(macro_set_from_stack_base(write_offset, expr) + "\n")
+        elif assign_type == 'inc':
+            file.write(f"memory[{location}] = memory[{location}] + {expr};\n")
+            # file.write(macro_set_from_stack_base(
+            #     var_offset, f"(({(location)}) + ({expr}))"
+            # ) + "\n")
+        else: # type == 'set'
+            file.write(f"memory[{location}] = {expr};\n")
+            # file.write(macro_set_from_stack_base(var_offset, expr) + "\n")
     
     # opcode func_call
     elif opcode == 'func_call':

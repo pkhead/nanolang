@@ -217,13 +217,6 @@ BUILTIN_METHODS = _func([
     ),
 
     BuiltinFunction(
-        name='wait_until',
-        type='void',
-        params=['bool'],
-        generate=lambda args: f"wait_until {(args[0])};"
-    ),
-
-    BuiltinFunction(
         name='create_clone',
         type='void',
         params=[],
@@ -257,14 +250,14 @@ BUILTIN_METHODS = _func([
         name='key_pressed',
         type='bool',
         params=['string'],
-        generate=lambda args: f"key_pressed({args[0]})"
+        generate=lambda args: f"(key_pressed({args[0]})+0)"
     ),
 
     BuiltinFunction(
         name='mouse_down',
         type='bool',
         params=[],
-        generate=lambda args: f"mouse_down()"
+        generate=lambda args: f"(mouse_down()+0)"
     ),
 
     BuiltinFunction(
@@ -303,5 +296,19 @@ BUILTIN_METHODS = _func([
         generate=lambda args: f"random({args[0]}, {args[1]})"
     ),
 
-    
+    # OTHER
+    BuiltinFunction(
+        name='malloc',
+        type='void*',
+        params=['number'],
+        generate=lambda args: f"nano_malloc {args[0]};",
+        generate_return=lambda: "nano_malloc_return"
+    ),
+
+    BuiltinFunction(
+        name='free',
+        type='void',
+        params=['void*'],
+        generate=lambda args: f"nano_free {args[0]};"
+    )
 ])

@@ -1,6 +1,6 @@
 - for loop
-- input project/output directory in cli
 - pointers + memalloc
+- wait until X -> repeat while X {}  (unless expression stack is empty, otherwise it compiles directly into wait until)
 
 - assigning to temp here does not work with structs:
 - if expr_stack.stack_size > 0:

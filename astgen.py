@@ -196,6 +196,19 @@ ARITHMETIC_SYMBOLS_NAMES = ['op_add', 'op_sub', 'op_mul', 'op_div']
 
 ASSIGNMENT_SYMBOLS = ['=', '+=', '-=']
 
+# returns either an op_cast expression or the expression itself,
+# if a type isn't necessary.
+# also, raises an exception if the cast is not possible.
+def type_cast(program, tok_for_err_msg, expr, output_type):
+    if output_type.is_same(expr.type):
+        return expr
+
+    # throw error if cast is invalid
+    if not expr.type.can_cast(output_type):
+        raise CompilationException.from_token(tok_for_err_msg, f"could not cast {str(expr.type)} to {str(output_type)}")
+
+    return UnaryOperator('op_cast', output_type, expr)
+
 # assumes the identifier token was popped off, leaving the
 # token queue on the opening parenthesis
 def parse_function_call(program, tokens, block, id_token):
@@ -227,10 +240,10 @@ def parse_function_call(program, tokens, block, id_token):
         
             arg_expr = parse_expression(program, tokens, block)
             param_type = func_data.parameters[arg_index]['type']
-            if not arg_expr.type.is_same(param_type):
-                raise CompilationException.from_token(next_tok, f"expected {str(param_type)} for argument {arg_index}, got {str(arg_expr.type)}")
+            if not arg_expr.type.can_cast_implicit(param_type):
+                raise CompilationException.from_token(next_tok, f"could not cast {str(arg_expr.type)} to {str(param_type)} for argument {arg_index}")
             
-            func_args.append(arg_expr)
+            func_args.append(type_cast(program, next_tok, arg_expr, param_type))
 
             next_tok = tokens.pop()
             if next_tok.is_symbol(')'): break
@@ -247,19 +260,6 @@ def parse_function_call(program, tokens, block, id_token):
         'builtin': is_builtin,
         'args': func_args
     }
-
-# returns either an op_cast expression or the expression itself,
-# if a type isn't necessary.
-# also, raises an exception if the cast is not possible.
-def type_cast(program, tok_for_err_msg, expr, output_type):
-    if output_type.is_same(expr.type):
-        return expr
-
-    # throw error if cast is invalid
-    if not expr.type.can_cast(output_type):
-        raise CompilationException.from_token(tok_for_err_msg, f"could not cast {str(expr.type)} to {str(output_type)}")
-
-    return UnaryOperator('op_cast', output_type, expr)
 
 def parse_expression(program, tokens, block, order=0):
     # TODO:
@@ -333,7 +333,7 @@ def parse_expression(program, tokens, block, order=0):
             tokens.pop()
             b = parse_expression(program, tokens, block, next_order)
 
-            if not (a.type.can_cast(ValueType.STRING) and b.type.can_cast(ValueType.STRING)):
+            if not (a.type.can_cast_implicit(ValueType.STRING) and b.type.can_cast_implicit(ValueType.STRING)):
                 raise CompilationException.from_token(op_tok, "attempt to concatenate " + str(a.type) + " with " + str(b.type))
             
             a = type_cast(program, op_tok, a, ValueType(ValueType.STRING))
@@ -424,6 +424,9 @@ def parse_expression(program, tokens, block, order=0):
                 func_data = func_call_data['function']
                 func_args = func_call_data['args']
 
+                if func_data.type.is_a(ValueType.VOID):
+                    raise CompilationException.from_token(tok, f"function '{tok.value}' does not return a value")
+
                 if func_call_data['builtin']:
                     return IdentifierOperator('builtin_func_call', func_data.type, tok.value, func_args)
                 else:
@@ -431,11 +434,26 @@ def parse_expression(program, tokens, block, order=0):
             else:
                 # here, a variable is required
                 if var_info == None:
-                    raise Exception(f"use of undeclared identifier '{(tok.value)}'")
+                    raise CompilationException.from_token(tok, f"use of undeclared identifier '{(tok.value)}'")
                 
                 # TODO: arrays
                 if id_op.is_symbol('['):
-                    raise Exception("arrays not yet supported")
+                    tokens.pop()
+
+                    if not var_info['type'].is_pointer() or var_info['type'].base_type.is_a(ValueType.VOID):
+                        raise CompilationException.from_token(tok, "cannot take index of a " + str(var_info['type']))
+                    
+                    index_expr = parse_expression(program, tokens, block)
+
+                    if not index_expr.type.can_cast_implicit(ValueType.NUMBER):
+                        raise CompilationException.from_token(id_op, "expected number for index, got a " + str(index_expr.type))
+
+                    if not tokens.peek().is_symbol(']'):
+                        raise CompilationException.from_token(tok, "expected ']', got " + str(tokens.peek()))
+                    tokens.pop()
+
+                    return IdentifierOperator('op_index', var_info['type'].base_type, tok.value, index_expr);
+                    # raise Exception("arrays not yet supported")
             
                 # TODO: structs
                 elif id_op.is_symbol('.'):
@@ -537,6 +555,61 @@ def parse_if_branch(program, tokens, block):
         'branch': if_branch,
         'else_branch': else_branch
     }
+
+def parse_assignment(program, tokens, block, id_tok, var_type):
+    next_tok = tokens.peek()
+
+    # index assignment
+    if next_tok.is_symbol('['):
+        tokens.pop()
+
+        if not var_type.is_pointer() or var_type.base_type.is_a(ValueType.VOID):
+            raise CompilationException.from_token(next_tok, "cannot take index of a " + str(var_type))
+
+        index_expr = parse_expression(program, tokens, block)
+
+        if not index_expr.type.can_cast_implicit(ValueType.NUMBER):
+            raise CompilationException.from_token(next_tok, "expected number for index, got a " + str(index_expr.type))
+
+        if not tokens.peek().is_symbol(']'):
+            raise CompilationException.from_token(tokens.peek(), "expected ']', got " + tokens.peek())
+        tokens.pop()
+
+        next_tok = tokens.peek()
+        if not (next_tok.type == Token.TYPE_SYMBOL and next_tok.value in ASSIGNMENT_SYMBOLS):
+            raise CompilationException.from_token(next_tok, "invalid statement")
+
+        return {
+            'type': 'index',
+            'index': index_expr,
+            'assignment': parse_assignment(program, tokens, block, next_tok, var_type.base_type)
+        }
+    
+    elif next_tok.type == Token.TYPE_SYMBOL and next_tok.value in ASSIGNMENT_SYMBOLS:
+        # pop equals sign
+        tokens.pop()
+
+        # read expression
+        expr = parse_expression(program, tokens, block)
+        if not expr.type.is_same(var_type):
+            raise CompilationException.from_token(id_tok, f"attempt to assign a {str(expr.type)} to a {str(var_type)}")
+        
+        assign_type = 'set'
+        statement_value = expr
+
+        if next_tok.is_symbol('+='):
+            assign_type = 'inc'
+        elif next_tok.is_symbol('-='):
+            assign_type = 'inc'
+            statement_value = UnaryOperator('op_neg', expr.type, expr)
+        
+        return {
+            'type': assign_type,
+            'value': statement_value
+        }
+    
+    else:
+        raise CompilationException.from_token(id_tok, "invalid assignment")
 
 def parse_statement(program, tokens, block):
     tok = tokens.pop()
@@ -652,42 +725,15 @@ def parse_statement(program, tokens, block):
     # function call and variable assignment statements have to be specifically programmed
     elif tok.type == Token.TYPE_IDENTIFIER:
         next_tok = tokens.peek()
-        # variable assignment
-        if next_tok.type == Token.TYPE_SYMBOL and next_tok.value in ASSIGNMENT_SYMBOLS:
-            var_name = tok.get_identifier()
-            var_info = block.get_variable_info(var_name)
 
-            # TODO: check if variable is a function name for error message
-            if not var_info:
-                raise CompilationException.from_token(tok, f"use of undeclared identifier '{var_name}'")
+        var_name = tok.get_identifier()
+        var_info = block.get_variable_info(var_name)
 
-            var_type = var_info['type']
-
-            # pop equals sign
-            tokens.pop()
-
-            # read expression
-            expr = parse_expression(program, tokens, block)
-            if not expr.type.is_same(var_type):
-                raise CompilationException.from_token(tok, f"attempt to assign a {str(expr.type)} to a {str(var_type)}")
-            
-            opcode = 'var_assign'
-            statement_value = expr
-
-            if next_tok.is_symbol('+='):
-                opcode = 'var_increment'
-            elif next_tok.is_symbol('-='):
-                opcode = 'var_increment'
-                statement_value = UnaryOperator('op_neg', expr.type, expr)
-            
-            statement = {
-                'type': opcode,
-                'var_name': var_name,
-                'value': statement_value
-            }
-            
-            return statement
-        else:
+        if not var_info and not var_name in program['functions'] and not var_name in BUILTIN_METHODS:
+            raise CompilationException.from_token(tok, f"use of undeclared identifier '{var_name}'")
+        
+        # function name
+        if not var_info:
             func_call_data = parse_function_call(program, tokens, block, tok)
 
             return {
@@ -695,6 +741,15 @@ def parse_statement(program, tokens, block):
                 'func_name': func_call_data['function'].name,
                 'args': func_call_data['args']
             }
+
+        # variable assignment
+        else:
+            return {
+                'type': 'var_assign',
+                'var_name': var_name,
+                'assignment': parse_assignment(program, tokens, block, tok, var_info['type'])
+            }
+            
     
     else:
         raise CompilationException.from_token(tok, "unexpected " + str(tok))

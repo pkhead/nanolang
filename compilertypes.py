@@ -33,8 +33,9 @@ class ValueType:
             case _:
                 raise Exception("could not read type string " + str)
         
-        while base_len < len(str) and str[base_len] != '*':
+        while base_len < len(str) and str[base_len] == '*':
             out_type = ValueType.pointer_to(out_type)
+            base_len += 1
         
         return out_type
     
@@ -64,6 +65,10 @@ class ValueType:
         else:
             return self.type == other.type
     
+    # returns true if it is a pointer or an array
+    def is_pointer(self):
+        return self.type == ValueType.POINTER
+    
     def size(self):
         if self.type == ValueType.VOID:
             raise Exception("internal: attempt to get sizeof void")
@@ -74,6 +79,9 @@ class ValueType:
     def can_cast(self, to_type):
         if not isinstance(to_type, ValueType):
             to_type = ValueType(to_type)
+        
+        if self.is_a(ValueType.POINTER) and to_type.is_a(ValueType.POINTER):
+            return True
         
         if self.is_same(to_type): return True
 
@@ -86,5 +94,20 @@ class ValueType:
         
         elif to_type.is_a(ValueType.POINTER):
             can_cast = self.is_a(ValueType.NUMBER) or self.is_a(ValueType.POINTER)
+        
+        return can_cast
+    
+    def can_cast_implicit(self, to_type):
+        if not isinstance(to_type, ValueType):
+            to_type = ValueType(to_type)
+        
+        if self.is_same(to_type): return True
+        
+        can_cast = False
+
+        if to_type.is_a(ValueType.BOOL):
+            can_cast = self.is_a(ValueType.NUMBER)
+        elif to_type.is_a(ValueType.STRING):
+            can_cast = self.is_a(ValueType.NUMBER)
         
         return can_cast
