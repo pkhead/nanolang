@@ -31,6 +31,6 @@ nanolang examples/hello_world --sb3 helloworld.sb3
 nanolang examples/hello_world -o hello_world
 ```
 
-[!NOTE]
-calling nanolang from the source repository actually creates an error.
-substitute `nanolang` with `python .`.
+> [!NOTE]
+> calling nanolang from the source repository actually creates an error.
+> substitute `nanolang` with `python .`.
