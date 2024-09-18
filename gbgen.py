@@ -82,7 +82,7 @@ proc internal_alloc_stack {
 
     repeat length stack_ptrs + 1 {
         if stack_ptrs[i] == "" {
-            stack_pos = (i-1) * 1024 + 1;
+            stack_pos = (i-1) * 512 + 1;
 
             if i > length stack_ptrs {
                 add stack_pos to stack_ptrs;
@@ -92,7 +92,7 @@ proc internal_alloc_stack {
                 stack_heads[i] = stack_pos;
             }
 
-            until length memory >= stack_pos + 1023 {
+            until length memory >= stack_pos + 511 {
                 add "uninit" to memory;
             }
 
@@ -669,64 +669,3 @@ def generate_program(program, file, is_stage):
             raise Exception(f"internal: invalid event {event_name}")
         
         file.write(" {\ninternal_alloc_stack;\n" + block_name + " init_stack_ret;\n}\n")
-
-# sample main.gs
-"""
-costumes "alien-in-suit.png";
-
-proc alloc_stack {
-    local i = 1;
-    stack_pos = 0;
-
-    repeat length stack_info + 1 {
-        if stack_info[i] == "" {
-            stack_pos = (i-1) * 1024 + 1;
-
-            if i == length stack_info + 1 {
-                add stack_pos to stack_info;
-            } else {
-                stack_info[i] = stack_pos;
-            }
-
-            until length memory >= stack_pos + 1023 {
-                add "" to memory;
-            }
-
-            init_stack_ret = i;
-            stop_this_script;
-        }
-
-        i += 1;
-    }
-    
-
-    stack_pos = (i-1) * 1024 + 1;
-    stack_info[i] = stack_pos;
-
-    until length memory >= stack_pos {
-        add "" to memory;
-    }
-
-    init_stack_ret = i;
-}
-
-nowarp proc _main own_stack, stack_id {
-    if $own_stack != 0 {
-        stack_info[$stack_id] = "";
-    }
-}
-
-onflag {
-    delete memory;
-    delete stack_ptrs;
-
-    alloc_stack;
-    _main 0, init_stack_ret;
-    wait 1;
-    alloc_stack;
-    _main 1, init_stack_ret;
-    wait 1;
-    alloc_stack;
-    _main 1, init_stack_ret;
-}
-"""
