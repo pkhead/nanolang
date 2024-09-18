@@ -38,9 +38,10 @@ class Block:
 class ExpressionNode:
     def __init__(self):
         self._const = False
+        self.can_address = False
     
     def is_const(self):
-        return self._const
+        return self._const    
 
 class ExpressionConstant(ExpressionNode):
     def __init__(self, tok):
@@ -161,6 +162,7 @@ class IdentifierOperator(ExpressionNode):
         self.id = id
         self.data = data
         self._const = False
+        self.can_address = op == 'var_get'
     
     def __str__(self):
         return f'{(self.op)}<{self.type}>(<{self.id}>, {str(self.data)})'
@@ -350,10 +352,11 @@ def parse_expression(program, tokens, block, order=0):
             op_name = ARITHMETIC_SYMBOLS_NAMES[ARITHMETIC_SYMBOLS.index(tokens.pop().value)]
             b = parse_expression(program, tokens, block, next_order)
 
-            if not (a.type.is_a(ValueType.NUMBER) and b.type.is_a(ValueType.NUMBER)):
+            out_ptr = a.type.is_pointer()
+            if not ((out_ptr or a.type.is_a(ValueType.NUMBER)) and b.type.is_a(ValueType.NUMBER)):
                 raise CompilationException.from_token(op_tok, "attempt to add " + str(a.type) + " with " + str(b.type))
             
-            a = BinaryOperator(op_name, ValueType(ValueType.NUMBER), a, b)
+            a = BinaryOperator(op_name, a.type, a, b)
             op_tok = tokens.peek()
         
         return a
@@ -395,6 +398,25 @@ def parse_expression(program, tokens, block, order=0):
             tokens.pop()
             expr = parse_expression(program, tokens, block, order)
             return UnaryOperator('op_bnot', ValueType(ValueType.BOOL), expr)
+
+        # address of
+        elif tok.is_symbol('&'):
+            tokens.pop()
+            expr = parse_expression(program, tokens, block, order)
+            if not expr.can_address:
+                raise CompilationException.from_token(tok, "can only take address of lvalue")
+            return UnaryOperator('op_addr', ValueType.pointer_to(expr.type), expr)
+        
+        # indirect
+        elif tok.is_symbol('*'):
+            tokens.pop()
+            expr = parse_expression(program, tokens, block, order)
+            if not expr.type.is_pointer():
+                raise CompilationException.from_token(tok, "attempt to use indirection on a non-pointer type")
+            
+            out = UnaryOperator('op_indirect', expr.type.base_type, expr)
+            out.can_address = True
+            return out
         
         # type cast
         elif tok.type == Token.TYPE_KEYWORD and tok.value in Token.KEYWORD_TYPES:
@@ -436,7 +458,7 @@ def parse_expression(program, tokens, block, order=0):
                 if var_info == None:
                     raise CompilationException.from_token(tok, f"use of undeclared identifier '{(tok.value)}'")
                 
-                # TODO: arrays
+                # TODO: multi-indexing
                 if id_op.is_symbol('['):
                     tokens.pop()
 
@@ -591,8 +613,6 @@ def parse_assignment(program, tokens, block, id_tok, var_type):
 
         # read expression
         expr = parse_expression(program, tokens, block)
-        if not expr.type.is_same(var_type):
-            raise CompilationException.from_token(id_tok, f"attempt to assign a {str(expr.type)} to a {str(var_type)}")
         
         assign_type = 'set'
         statement_value = expr
@@ -602,6 +622,11 @@ def parse_assignment(program, tokens, block, id_tok, var_type):
         elif next_tok.is_symbol('-='):
             assign_type = 'inc'
             statement_value = UnaryOperator('op_neg', expr.type, expr)
+
+        # type check
+        if not (assign_type == 'inc' and var_type.is_pointer() and expr.type.can_cast_implicit(ValueType.NUMBER)) \
+        and not expr.type.is_same(var_type):
+            raise CompilationException.from_token(id_tok, f"attempt to assign a {str(expr.type)} to a {str(var_type)}")
         
         return {
             'type': assign_type,

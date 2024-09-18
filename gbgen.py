@@ -363,6 +363,14 @@ class ExpressionStack:
     def finalize_stack_references(self, v):
         return re.sub(r'@<(\d+)>', self._re_replace, v)
 
+class ExpressionLvalue:
+    def __init__(self, memloc):
+        self.value = f"memory[{memloc}]"
+        self.memloc = memloc
+    
+    def __str__(self):
+        return str(self.value)
+
 def generate_func_call(ctx, func_data, func_args):
     file = ctx.sprite_ctx.file
     func_return_type = func_data.type
@@ -386,12 +394,14 @@ def generate_func_call(ctx, func_data, func_args):
     
     # leaves return value on the stack
 
-def generate_expression(ctx, expr, stack):
+def generate_expression(ctx, expr, stack, prefer_lvalue=False):
     if expr.op == 'const':
         return gs_literal(expr.value)
 
     elif expr.op == 'var_get':
-        return macro_get_from_stack_base(ctx.get_variable_offset(expr.id))
+        offset = ctx.get_variable_offset(expr.id)
+        memloc = f"memory[stack_ptrs[$stack_id]] + ({offset})"
+        return ExpressionLvalue(memloc) if prefer_lvalue else ExpressionLvalue(memloc).value
     
     elif expr.op == 'func_call':
         generate_func_call(ctx, ctx.sprite_ctx.program['functions'][expr.id], expr.data)
@@ -433,6 +443,17 @@ def generate_expression(ctx, expr, stack):
     elif expr.op == 'op_bnot':
         value = generate_expression(ctx, expr.expr, stack)
         return f"({value} == 0)" # for some reason, not (expr) breaks project and !(expr) doesn't emit a not statement.
+
+    elif expr.op == 'op_addr':
+        subexpr = generate_expression(ctx, expr.expr, stack, prefer_lvalue=True)
+        if not isinstance(subexpr, ExpressionLvalue):
+            raise Exception("op_addr error")
+        
+        return subexpr.memloc
+    
+    elif expr.op == 'op_indirect':
+        memloc = generate_expression(ctx, expr.expr, stack)
+        return ExpressionLvalue(memloc) if prefer_lvalue else ExpressionLvalue(memloc).value
 
     elif expr.op == 'op_index':
         value = generate_expression(ctx, expr.data, stack)

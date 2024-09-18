@@ -1,38 +1,81 @@
 costume "alien-in-suit.png"
 
-when flag
-    goto_xy(0, 0)
-    var xv = 0
-    var yv = 0
+# memory inspector
+# left & right arrow to change inspected memory location
+# space to enter command
+#   exit: stop program
+#   set:  set location
 
-    while true
-        yv -= 1
+when flag
+    var test_alloc_len = 5
+    var test_alloc = string* (malloc(test_alloc_len))
+
+    test_alloc[0] = "foo"
+    test_alloc[1] = "bar"
+    test_alloc[2] = "baz"
+    test_alloc[3] = "AAAA"
+    test_alloc[4] = "EEEE"
+
+    var ptr = test_alloc
+
+    var active = true
+    while active
+        say("address " & number(ptr) & ": " & (*ptr))
 
         if key_pressed("right arrow")
-            change_x(10)
-            say("test")
+            ptr += 1
+            # while key_pressed("right arrow") end
         elseif key_pressed("left arrow")
-            change_x(-10)
-        end
+            ptr -= 1
+            # while key_pressed("left arrow") end
+        elseif key_pressed("space")
+            var answer = ask("?")
 
-        if key_pressed("space"):
-            yv = 10
-
-        change_y(yv)
-
-        if get_y() < 0
-            set_y(0)
-            yv = 0
+            if answer == "exit"
+                active = false
+            elseif answer == "set"
+                ptr = string* (number(ask("enter address")))
+            else
+                say_wait("try again", 1)
+            end
         end
     end
+
+    free(void* (test_alloc))
+    say_wait("exit", 1)
 end
 
-when keypressed("space")
-    create_clone()
-end
-
-when cloned
-    say("hello, world!")
-    wait(1)
-    deleteclone
-end
+# when flag
+#     goto_xy(0, 0)
+#     var xv = 0
+#     var yv = 0
+# 
+#     while !key_pressed("space") end
+#     say_wait("Hello!", 2)
+# 
+#     var test_alloc = number* (malloc(5))
+#     test_alloc[0] = 3
+#     var temp = test_alloc[0]
+#     say_wait(string(temp), 2)
+# 
+#     while true
+#         yv -= 1
+# 
+#         if key_pressed("right arrow")
+#             change_x(10)
+#             say("test")
+#         elseif key_pressed("left arrow")
+#             change_x(-10)
+#         end
+# 
+#         if key_pressed("space"):
+#             yv = 10
+# 
+#         change_y(yv)
+# 
+#         if get_y() < 0
+#             set_y(0)
+#             yv = 0
+#         end
+#     end
+# end
