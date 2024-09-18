@@ -12,12 +12,12 @@ if __name__ == '__main__':
         description='Nanolang to Goboscript compiler',
     )
     parser.add_argument('projectdir', help="The Nanolang project directory.")
-    parser.add_argument('-o', metavar='output', help="The directory to compile the Goboscript project to. Defaults to {projectdir}/.gs")
+    parser.add_argument('-o', metavar='output', dest='out', help="The directory to compile the Goboscript project to. Defaults to {projectdir}/.gs")
     parser.add_argument('--sb3', metavar='path', dest='sb3', help="Call goboscript to create an sb3 file at the given path.")
 
     args = parser.parse_args()
     
-    gs_out = os.path.join(args.projectdir, '.gs')
+    gs_out = os.path.join(args.projectdir, '.gs') if args.out == None else args.out
     nanoproject.compile(args.projectdir, gs_out)
 
     if args.sb3:

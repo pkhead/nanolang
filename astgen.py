@@ -2,6 +2,7 @@ from lexer import Token
 from compileerror import CompilationException
 from compilertypes import ValueType
 from builtin_methods import BUILTIN_METHODS
+import os
     
 class Block:
     def __init__(self, parent=None):
@@ -845,7 +846,10 @@ def parse_program(tokens, project_dir_path):
             
             asset_name = tokens.pop()
             assert(asset_name.type == Token.TYPE_STRING)
-            program['costumes'].append(project_dir_path + '/' + asset_name.value)
+            asset_path = os.path.normpath(os.path.join(project_dir_path, asset_name.value))
+
+            asset_path = asset_path.replace('\\', '/') # bruh
+            program['costumes'].append(asset_path)
         
         # sounds
         # syntax similar to costumes
@@ -855,7 +859,10 @@ def parse_program(tokens, project_dir_path):
             
             asset_name = tokens.pop()
             assert(asset_name.type == Token.TYPE_STRING)
-            program['sounds'].append(project_dir_path + '/' + asset_name.value)
+            asset_path = os.path.normpath(os.path.join(project_dir_path, asset_name.value))
+
+            asset_path = asset_path.replace('\\', '/') # bruh
+            program['sounds'].append(asset_path)
         
         # function definition
         elif tok.is_keyword('func'):
