@@ -99,7 +99,7 @@ class Function:
         self.definition = None
         self.attributes = attribs
 
-ATTRIBUTES = ['nowarp']
+ATTRIBUTES = ['warp']
 EVENT_NAMES = ['flag', 'keypress']
 
 COMPARISON_SYMBOLS = ['<', '>', '<=', '>=']

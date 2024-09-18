@@ -49,20 +49,29 @@ costume "alien-in-suit.png"
 #     return a + b
 # end
 
-func fib(n: number): number
-    if n == 0 || n == 1: return n
-    else
-        return fib(n-1) + fib(n-2)
-    end
-end
-
-@nowarp
 on flag
-    var i = 1
-    repeat 10
-        # var num = number(ask("enter index of fibonacci sequence"))
-        # sprite_say_wait(string(fib(num)), 2)
-        sprite_say_wait(string(i), 0.1)
-        i = i + 1
+    goto_xy(0, 0)
+    var xv = 0
+    var yv = 0
+
+    forever
+        yv = yv - 1
+
+        if key_pressed("right arrow")
+            change_x(10)
+            say("test")
+        elseif key_pressed("left arrow")
+            change_x(-10)
+        end
+
+        if key_pressed("space"):
+            yv = 10
+
+        change_y(yv)
+
+        if get_y() < 0
+            set_y(0)
+            yv = 0
+        end
     end
 end

@@ -170,7 +170,7 @@ class FunctionContext:
     
     def __init__(self, sprite_ctx, paramlist, return_type):
         self.sprite_ctx = sprite_ctx
-        self.nowarp = False
+        self.warp = False
         self.does_return = False
         self.active_variables = []
         self.active_tempvars = []
@@ -601,13 +601,13 @@ def generate_program(program, file):
 
     for func in program['functions'].values():
         func_ctx = FunctionContext(sprite_ctx, func.parameters, func.type)
-        func_ctx.nowarp = 'nowarp' in func.attributes
+        func_ctx.warp = 'warp' in func.attributes
         func_ctx.does_return = not func.type.is_void()
 
         block_name = "_" + func.name
         sprite_ctx.function_block_names[func.name] = block_name
         
-        if func_ctx.nowarp:
+        if not func_ctx.warp:
             file.write("nowarp ")
         file.write(f"proc {block_name} stack_id")
         file.write(" {\n")
@@ -618,12 +618,12 @@ def generate_program(program, file):
     event_id = 0
     for event_handler in program['events']:
         func_ctx = FunctionContext(sprite_ctx, [], ValueType(ValueType.VOID))
-        func_ctx.nowarp = 'nowarp' in event_handler['attributes']
+        func_ctx.warp = 'warp' in event_handler['attributes']
         func_ctx.does_return = False
 
         block_name = "event" + str(event_id)
 
-        if 'nowarp' in event_handler['attributes']:
+        if not 'warp' in event_handler['attributes']:
             file.write("nowarp ")
         
         file.write(f"proc {block_name} stack_id {{\n")
