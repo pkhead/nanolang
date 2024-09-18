@@ -65,6 +65,26 @@ class TokenQueue:
     def __bool__(self):
         return self.index < len(self.list)
 
+class CharacterQueue:
+    def __init__(self, file):
+        self.file = file
+        self.queue = []
+    
+    def _read_single(self):
+        if self.queue:
+            v = self.queue[0]
+            del self.queue[0]
+            return v
+
+        return self.file.read(1)
+
+    def read(self, n):
+        assert(n == 1)
+        return self._read_single()
+    
+    def push(self, ch):
+        self.queue.append(ch)
+
 def parse_tokens(file_path):
     KEYWORDS = Token.KEYWORD_TYPES + [
         'func', 'var',
@@ -87,6 +107,7 @@ def parse_tokens(file_path):
         # operators
         '+', '-', '*', '/', '&',
         '==', '>=', '<=', '>', '<', '!=', '!', '&&', '||',
+        '+=', '-=', '*=', '/=',
     ]
 
     NUMERIC_CHARS = ['.', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
@@ -94,7 +115,8 @@ def parse_tokens(file_path):
 
     tokens = []
 
-    with open(file_path, 'r') as file:
+    with open(file_path, 'r') as _f:
+        file = CharacterQueue(_f)
         str_buf = []
         line_begin = True
         is_number = False
@@ -192,6 +214,7 @@ def parse_tokens(file_path):
                         if not candidates:
                             if not sym in SYMBOLS:
                                 raise CompilationException(token_lineno, token_linecol, "unknown symbol")
+                            file.push(char)
                             tokens.append(Token(token_lineno, token_linecol, Token.TYPE_SYMBOL, sym))
                             break
                         

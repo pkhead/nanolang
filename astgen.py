@@ -194,6 +194,8 @@ COMPARISON_SYMBOL_NAMES = ['op_lt', 'op_gt', 'op_lte', 'op_gte']
 ARITHMETIC_SYMBOLS = ['+', '-', '*', '/']
 ARITHMETIC_SYMBOLS_NAMES = ['op_add', 'op_sub', 'op_mul', 'op_div']
 
+ASSIGNMENT_SYMBOLS = ['=', '+=', '-=']
+
 # assumes the identifier token was popped off, leaving the
 # token queue on the opening parenthesis
 def parse_function_call(program, tokens, block, id_token):
@@ -644,8 +646,9 @@ def parse_statement(program, tokens, block):
     # since there is no expression-as-statement functionality (partly due to the lack of semicolons)
     # function call and variable assignment statements have to be specifically programmed
     elif tok.type == Token.TYPE_IDENTIFIER:
+        next_tok = tokens.peek()
         # variable assignment
-        if tokens.peek().is_symbol('='):
+        if next_tok.type == Token.TYPE_SYMBOL and next_tok.value in ASSIGNMENT_SYMBOLS:
             var_name = tok.get_identifier()
             var_info = block.get_variable_info(var_name)
 
@@ -662,12 +665,21 @@ def parse_statement(program, tokens, block):
             expr = parse_expression(program, tokens, block)
             if not expr.type.is_same(var_type):
                 raise CompilationException.from_token(tok, f"attempt to assign a {str(expr.type)} to a {str(var_type)}")
+            
+            opcode = 'var_assign'
+            statement_value = expr
+
+            if next_tok.is_symbol('+='):
+                opcode = 'var_increment'
+            elif next_tok.is_symbol('-='):
+                opcode = 'var_increment'
+                statement_value = UnaryOperator('op_neg', expr.type, expr)
+            
             statement = {
-                'type': 'var_assign',
+                'type': opcode,
                 'var_name': var_name,
-                'value': expr
+                'value': statement_value
             }
-            print("EXPR: " + str(expr))
             
             return statement
         else:

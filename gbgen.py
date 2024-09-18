@@ -420,7 +420,7 @@ def generate_statement(ctx, statement, scope):
             file.write(macro_stack_push('\"\"') + "\n")
         
     # opcode var_assign
-    elif opcode == 'var_assign':
+    elif opcode == 'var_assign' or opcode == 'var_increment':
         var_name = statement['var_name']
         write_offset = ctx.get_variable_offset(var_name)
         
@@ -432,7 +432,15 @@ def generate_statement(ctx, statement, scope):
         if expr_stack.stack_size > 0:
             file.write(f"temp = {expr};\n")
             expr_stack.clear(file)
+            
+            if opcode == 'var_increment':
+                file.write(f"temp += {macro_get_from_stack_base(write_offset)}")
+            
             file.write(macro_set_from_stack_base(write_offset, "temp") + "\n")
+        elif opcode == 'var_increment':
+            file.write(macro_set_from_stack_base(
+                write_offset, f"(({(macro_get_from_stack_base(write_offset))}) + ({expr}))"
+            ) + "\n")
         else:
             file.write(macro_set_from_stack_base(write_offset, expr) + "\n")
     

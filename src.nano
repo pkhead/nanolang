@@ -55,7 +55,7 @@ when flag
     var yv = 0
 
     while true
-        yv = yv - 1
+        yv -= 1
 
         if key_pressed("right arrow")
             change_x(10)

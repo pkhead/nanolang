@@ -6,6 +6,9 @@ from astgen import parse_program
 from gbgen import generate_program
 
 if __name__ == '__main__':
+    for tok in parse_tokens('src.nano'):
+        print(str(tok) + " ... " + str(tok.value))
+
     tokens = TokenQueue(parse_tokens('src.nano'))
     program = parse_program(tokens)
     # print(program)
