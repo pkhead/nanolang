@@ -102,18 +102,18 @@ program_boilerplate = """
 
 # find a free block of memory
 proc nano_malloc size {
-    local cell_ptr = 1;
-    local prev_cell_ptr = 0;
-    local new_cell_ptr = 0;
-    local memory_skipped = 0;
+    cell_ptr = 1;
+    prev_cell_ptr = 0;
+    new_cell_ptr = 0;
+    memory_skipped = 0;
 
     if $size <= 0 {
         nano_malloc_return = 0;
         stop_this_script;
     }
     
-    until memory[cell_ptr] == 0 or memory_skipped >= $size {
-        memory_skipped = memory[cell_ptr] - (memory[cell_ptr + 2] + 3) - 1;
+    until memory[cell_ptr] == 0 or memory_skipped > $size {
+        memory_skipped = memory[cell_ptr] - cell_ptr - memory[cell_ptr + 2] - 3;
         prev_cell_ptr = cell_ptr;
         cell_ptr = memory[cell_ptr];
     }
@@ -125,8 +125,8 @@ proc nano_malloc size {
         new_cell_ptr = 4;
         cell_ptr = 0;
     
-    } elif memory_skipped >= $size {
-        DEBUG_malloc_cond = "found free";
+    } elif $size <= memory_skipped {
+        DEBUG_malloc_cond = "found free . memskip: " & memory_skipped;
         # condition when found free memory inbetween two allocations
         new_cell_ptr = prev_cell_ptr + memory[prev_cell_ptr + 2] + 3;
     
@@ -165,10 +165,18 @@ proc nano_malloc size {
 
 proc nano_free ptr {
     if $ptr > 0 {
-        local cell_ptr = $ptr - 3;
+        cell_ptr = $ptr - 3;
 
-        # cell.prev->next = cell.next;
+        # cell->prev.next = cell->next;
+        # if (cell->next != NULL) cell->next.prev = cell->prev;
         memory[memory[cell_ptr + 1]] = memory[cell_ptr];
+        if memory[cell_ptr] != 0 {
+            memory[memory[cell_ptr] + 1] = memory[cell_ptr + 1];
+        }
+
+        memory[cell_ptr] = 0;
+        memory[cell_ptr + 1] = 0;
+        memory[cell_ptr + 2] = 0;
     }
 }
 
