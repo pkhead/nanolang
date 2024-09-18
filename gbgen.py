@@ -74,15 +74,113 @@ def gs_literal(value):
 def generate_block(program, file, block):
     file.write("# " + str(block) + "\n")
 
+stage_boilerplate = """
+proc nano_init {
+    delete memory;
+    delete stack_ptrs;
+    delete stack_heads;
+
+    repeat 2048 {
+        add "" to memory;
+    }
+
+    memory[1] = 0;
+    memory[2] = 0;
+    memory[3] = 0;
+}
+onflag {
+    nano_init;
+    broadcast "nanostart";
+}
+"""
 program_boilerplate = """
-proc internal_alloc_stack {
+# struct alloc_cell {
+#   next: alloc_cell*,
+#   prev: alloc_cell*,
+#   size: int
+# }
+
+# find a free block of memory
+proc nano_malloc size {
+    local cell_ptr = 1;
+    local prev_cell_ptr = 0;
+    local new_cell_ptr = 0;
+    local memory_skipped = 0;
+
+    if $size <= 0 {
+        nano_malloc_return = 0;
+        stop_this_script;
+    }
+    
+    until memory[cell_ptr] == 0 or memory_skipped >= $size {
+        memory_skipped = memory[cell_ptr] - (memory[cell_ptr + 2] + 3) - 1;
+        prev_cell_ptr = cell_ptr;
+        cell_ptr = memory[cell_ptr];
+    }
+
+    if cell_ptr == 1 {
+        DEBUG_malloc_cond = "first alloc";
+        # condition for first allocation
+        prev_cell_ptr = 1;
+        new_cell_ptr = 4;
+        cell_ptr = 0;
+    
+    } elif memory_skipped >= $size {
+        DEBUG_malloc_cond = "found free";
+        # condition when found free memory inbetween two allocations
+        new_cell_ptr = prev_cell_ptr + memory[prev_cell_ptr + 2] + 3;
+    
+    } else {
+        DEBUG_malloc_cond = "last alloc";
+        # condition when reached last allocation
+        new_cell_ptr = cell_ptr + memory[cell_ptr + 2] + 3;
+        prev_cell_ptr = cell_ptr;
+        cell_ptr = 0;
+    }
+
+    # prev_cell_ptr = cell to left of free memory
+    # cell_ptr = cell to right of free memory
+
+    # ensure that the list is long enough to store the allocation
+    until length memory > new_cell_ptr + 3 + $size {
+        add "" to memory;
+    }
+
+    # if (prev_cell != NULL) prev_cell->next = new_cell;
+    if prev_cell_ptr != 0 {
+        memory[prev_cell_ptr] = new_cell_ptr;
+    }
+
+    # if (next_cell != NULL) next_cell->prev = new_cell;
+    if cell_ptr != 0 {
+        memory[cell_ptr + 1] = new_cell_ptr;
+    }
+
+    memory[new_cell_ptr] = cell_ptr;
+    memory[new_cell_ptr + 1] = prev_cell_ptr;
+    memory[new_cell_ptr + 2] = $size;
+
+    nano_malloc_return = new_cell_ptr + 3;
+}
+
+proc nano_free ptr {
+    if $ptr > 0 {
+        local cell_ptr = $ptr - 3;
+
+        # cell.prev->next = cell.next;
+        memory[memory[cell_ptr + 1]] = memory[cell_ptr];
+    }
+}
+
+proc nano_alloc_stack {
     local i = 1;
     stack_pos = 0;
     init_stack_ret = "error";
 
     repeat length stack_ptrs + 1 {
         if stack_ptrs[i] == "" {
-            stack_pos = (i-1) * 512 + 1;
+            nano_malloc 512;
+            stack_pos = nano_malloc_return;
 
             if i > length stack_ptrs {
                 add stack_pos to stack_ptrs;
@@ -90,10 +188,6 @@ proc internal_alloc_stack {
             } else {
                 stack_ptrs[i] = stack_pos;
                 stack_heads[i] = stack_pos;
-            }
-
-            until length memory >= stack_pos + 511 {
-                add "uninit" to memory;
             }
 
             # this will be the pointer to the start of a stack frame
@@ -489,7 +583,8 @@ def generate_statement(ctx, statement, scope):
     elif opcode == 'deleteclone':
         did_return = True
 
-        file.write("stack_ptrs[$stack_id] = \"\"; delete_this_clone;\n")
+        file.write("nano_free stack_ptrs[$stack_id];\n")
+        file.write("stack_ptrs[$stack_id] = \"\";\ndelete_this_clone;\n")
     
     # opcode if
     elif opcode == 'if':
@@ -605,12 +700,7 @@ def generate_program(program, file, is_stage):
         file.write(f"sounds {gs_literal(costume_name)};\n")
     
     if is_stage:
-        file.write("""onflag {
-    delete memory;
-    delete stack_ptrs;
-    delete stack_heads;
-    broadcast "nanostart";
-}\n""")
+        file.write(stage_boilerplate + "\n")
         
     file.write(program_boilerplate + "\n")
 
@@ -643,6 +733,7 @@ def generate_program(program, file, is_stage):
         
         file.write(f"proc {block_name} stack_id {{\n")
         generate_procedure(func_ctx, event_handler['definition'])
+        file.write("nano_free stack_ptrs[$stack_id];\n")
         file.write("stack_ptrs[$stack_id] = \"\";\n}\n")
         event_id += 1
 
@@ -668,4 +759,4 @@ def generate_program(program, file, is_stage):
         else:
             raise Exception(f"internal: invalid event {event_name}")
         
-        file.write(" {\ninternal_alloc_stack;\n" + block_name + " init_stack_ret;\n}\n")
+        file.write(" {\nnano_alloc_stack;\n" + block_name + " init_stack_ret;\n}\n")
