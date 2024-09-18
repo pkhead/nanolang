@@ -96,7 +96,9 @@ def parse_tokens(file_path):
         'costume', 'sound',
 
         # events
-        'when'
+        'when',
+
+        'deleteclone',
     ]
 
     SYMBOLS = [

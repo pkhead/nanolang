@@ -75,12 +75,6 @@ def generate_block(program, file, block):
     file.write("# " + str(block) + "\n")
 
 program_boilerplate = """
-onflag {
-    delete memory;
-    delete stack_ptrs;
-    delete stack_heads;
-}
-
 proc internal_alloc_stack {
     local i = 1;
     stack_pos = 0;
@@ -492,6 +486,11 @@ def generate_statement(ctx, statement, scope):
         
         file.write(macro_stack_pop(total_stack_size))
     
+    elif opcode == 'deleteclone':
+        did_return = True
+
+        file.write("stack_ptrs[$stack_id] = \"\"; delete_this_clone;\n")
+    
     # opcode if
     elif opcode == 'if':
         push_expression_result(ctx, statement['cond'], True)
@@ -596,7 +595,7 @@ def generate_procedure(func_ctx, definition):
         file.write(macro_stack_pop(1) + "\n") # pop base of current stack frame
         file.write("memory[stack_ptrs[$stack_id]] = temp;\n") # restore base of old stack frame
 
-def generate_program(program, file):
+def generate_program(program, file, is_stage):
     sprite_ctx = SpriteContext(program, file)
 
     for costume_name in program['costumes']:
@@ -605,6 +604,14 @@ def generate_program(program, file):
     for costume_name in program['sounds']:
         file.write(f"sounds {gs_literal(costume_name)};\n")
     
+    if is_stage:
+        file.write("""onflag {
+    delete memory;
+    delete stack_ptrs;
+    delete stack_heads;
+    broadcast "nanostart";
+}\n""")
+        
     file.write(program_boilerplate + "\n")
 
     for func in program['functions'].values():
@@ -643,7 +650,7 @@ def generate_program(program, file):
         event_param = event_handler['event_param']
         
         if event_name == 'flag':
-            file.write("onflag")
+            file.write("on \"nanostart\"")
         elif event_name == 'keypressed':
             file.write("onkey " + gs_literal(event_param))
         elif event_name == 'clicked':

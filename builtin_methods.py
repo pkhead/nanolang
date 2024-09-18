@@ -237,27 +237,6 @@ BUILTIN_METHODS = _func([
         generate=lambda args: f"clone {(args[0])};"
     ),
 
-    BuiltinFunction(
-        name='stop_all',
-        type='void',
-        params=[],
-        generate=lambda args: f"stop_all;"
-    ),
-
-    BuiltinFunction(
-        name='stop_other_scripts',
-        type='void',
-        params=[],
-        generate=lambda args: f"stop_other_scripts;"
-    ),
-
-    BuiltinFunction(
-        name='delete_clone',
-        type='void',
-        params=[],
-        generate=lambda args: f"delete_this_clone;"
-    ),
-
     # SENSING
     BuiltinFunction(
         name='ask',

@@ -563,6 +563,11 @@ def parse_statement(program, tokens, block):
         
         return statement
     
+    elif tok.is_keyword('deleteclone'):
+        return {
+            'type': 'deleteclone'
+        }
+    
     elif tok.is_keyword('var'):
         var_name = tokens.pop().get_identifier()
 
@@ -725,7 +730,7 @@ def parse_block(program, tokens, parent_block=None, if_block=False):
             if not does_return:
                 block.statements.append(statement)
 
-            if statement['type'] == 'return' or statement['type'] == 'forever':
+            if statement['type'] == 'return' or statement['type'] == 'forever' or statement['type'] == 'deleteclone':
                 does_return = True
 
     return block
@@ -740,7 +745,7 @@ def parse_function(program, tokens, function):
     
     function.definition = parse_block(program, tokens, func_block)
 
-def parse_program(tokens):
+def parse_program(tokens, project_dir_path):
     program = {}
     program['costumes'] = []
     program['sounds'] = []
@@ -760,7 +765,7 @@ def parse_program(tokens):
             
             asset_name = tokens.pop()
             assert(asset_name.type == Token.TYPE_STRING)
-            program['costumes'].append(asset_name.value)
+            program['costumes'].append(project_dir_path + '/' + asset_name.value)
         
         # sounds
         # syntax similar to costumes
@@ -770,7 +775,7 @@ def parse_program(tokens):
             
             asset_name = tokens.pop()
             assert(asset_name.type == Token.TYPE_STRING)
-            program['sounds'].append(asset_name.value)
+            program['sounds'].append(project_dir_path + '/' + asset_name.value)
         
         # function definition
         elif tok.is_keyword('func'):
