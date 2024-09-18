@@ -526,6 +526,12 @@ def generate_statement(ctx, statement, scope):
         generate_branch(ctx, scope, statement['branch'])
         file.write("}\n")
     
+    # opcode forever
+    elif opcode == 'forever':
+        file.write("forever {\n")
+        generate_branch(ctx, scope, statement['branch'])
+        file.write("}\n")
+    
     else:
         raise Exception("unknown statement opcode " + opcode)
 
@@ -538,10 +544,14 @@ def generate_block(ctx, block):
     # parse statement
     scope = Scope()
     did_return = False
+    in_forever = False
 
     for statement in block.statements:
         if statement['type'] == 'return':
             did_return = True
+        elif statement['type'] == 'forever':
+            did_return = True # doesn't actually return, but whether or not it does no longer matters
+            in_forever = True
         
         generate_statement(ctx, statement, scope)
 
@@ -555,6 +565,10 @@ def generate_block(ctx, block):
         
         file.write("# block end\n")
     
+    return {
+        'unescapable': in_forever
+    }
+    
 # assumes that there is a argument named stack_id
 def generate_procedure(func_ctx, definition):
     file = func_ctx.sprite_ctx.file
@@ -565,13 +579,14 @@ def generate_procedure(func_ctx, definition):
     file.write("memory[stack_ptrs[$stack_id]] = stack_heads[$stack_id];\n") # set current frame body to stack head
 
     file.write("# function definition follows\n")
-    generate_block(func_ctx, definition)
+    block_info = generate_block(func_ctx, definition)
 
     # stack frame end
-    file.write("\n# stack frame end\n")
-    file.write("temp = " + macro_get_from_stack_base(0) + ";\n")
-    file.write(macro_stack_pop(1) + "\n") # pop base of current stack frame
-    file.write("memory[stack_ptrs[$stack_id]] = temp;\n") # restore base of old stack frame
+    if not block_info['unescapable']:
+        file.write("\n# stack frame end\n")
+        file.write("temp = " + macro_get_from_stack_base(0) + ";\n")
+        file.write(macro_stack_pop(1) + "\n") # pop base of current stack frame
+        file.write("memory[stack_ptrs[$stack_id]] = temp;\n") # restore base of old stack frame
 
 def generate_program(program, file):
     sprite_ctx = SpriteContext(program, file)

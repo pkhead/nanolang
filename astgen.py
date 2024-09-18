@@ -424,17 +424,24 @@ def parse_if_branch(program, tokens, block):
     print("EXPR: " + str(cond_expr))
     if_branch = parse_branch(program, tokens, block, True)
     else_branch = None
-    block_end = tokens.pop()
+
+    block_end = tokens.peek()
 
     if block_end.is_keyword('else'):
+        tokens.pop()
         else_branch = parse_branch(program, tokens, block)
     elif block_end.is_keyword('elseif'):
+        tokens.pop()
         else_branch = {
             'branch': parse_if_branch(program, tokens, block),
             'single': True
         }
-    elif not block_end.is_keyword('end'):
-        raise CompilationException.from_token(block_end, "unexpected " + block_end)
+    elif block_end.is_keyword('end'):
+        if not if_branch['single']: tokens.pop()
+    elif not if_branch['single']:
+        raise CompilationException.from_token(block_end, "unexpected " + str(block_end))
+    
+    # pop end statement
     
     return {
         'type': 'if',
@@ -533,6 +540,14 @@ def parse_statement(program, tokens, block):
             'branch': branch
         }
     
+    elif tok.is_keyword('forever'):
+        branch = parse_branch(program, tokens, block)
+
+        return {
+            'type': 'forever',
+            'branch': branch
+        }
+    
     # since there is no expression-as-statement functionality (partly due to the lack of semicolons)
     # function call and variable assignment statements have to be specifically programmed
     elif tok.type == Token.TYPE_IDENTIFIER:
@@ -605,7 +620,7 @@ def parse_block(program, tokens, parent_block=None, if_block=False):
             if not does_return:
                 block.statements.append(statement)
 
-            if statement['type'] == 'return':
+            if statement['type'] == 'return' or statement['type'] == 'forever':
                 does_return = True
 
     return block

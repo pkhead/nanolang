@@ -49,11 +49,17 @@ class TokenQueue:
         self.index = 0
     
     def pop(self):
+        if self.index >= len(self.list):
+            raise CompilationException.from_token(self.list[-1], 'unexpected eof')
+        
         value = self.list[self.index]
         self.index += 1
         return value
     
     def peek(self):
+        if self.index >= len(self.list):
+            raise CompilationException.from_token(self.list[-1], 'unexpected eof')
+        
         return self.list[self.index]
     
     def __bool__(self):
@@ -63,7 +69,7 @@ def parse_tokens(file_path):
     KEYWORDS = Token.KEYWORD_TYPES + [
         'func', 'var',
 
-        'if', 'else', 'elseif', 'while', 'repeat', 'for', 'block', 'drop', 'end', 'return',
+        'if', 'else', 'elseif', 'while', 'repeat', 'forever', 'for', 'block', 'drop', 'end', 'return',
         'true', 'false',
 
         # asset links
