@@ -1,8 +1,11 @@
 - for loop
-- recursive pointer indexing
-- sprite and stage variables
+- recursive pointer indexing   =====TO TEMP======
+- cloning static variables... behavior works differently if a value is on the stack
+- figure out how to make static variables initialize only once
+  - probably keep a list of allocations to not clear on load
 - indirect assignment
 - wait until X -> repeat while X {}  (unless expression stack is empty, otherwise it compiles directly into wait until)
+- ability to report more than one error
 
 - assigning to temp here does not work with structs:
 - if expr_stack.stack_size > 0:

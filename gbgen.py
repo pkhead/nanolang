@@ -378,12 +378,14 @@ class FunctionContext:
 
 class Scope:
     def __init__(self):
-        self.allocated_variables = []
+        self.declared_variables = []
         self.size = 0
     
-    def register_variable(self, var_name, var_size):
-        self.allocated_variables.append(var_name)
-        self.size += var_size
+    def register_variable(self, var_name, var_size, nostack):
+        self.declared_variables.append(var_name)
+        
+        if not nostack:
+            self.size += var_size
 
 class ExpressionStack:
     def __init__(self):
@@ -603,8 +605,10 @@ def generate_statement(ctx, statement, scope):
     # opcode var_declare
     if opcode == 'var_declare':
         var_name = statement['var_name']
-        nostack = not (ctx.recursive or statement['metadata']['needs_ref'] or statement['var_type'].size() != 1)
-        ctx.new_variable(var_name, 1, nostack)
+        var_size = statement['var_type'].size()
+        nostack = not (ctx.recursive or statement['metadata']['needs_ref'] or var_size != 1)
+        ctx.new_variable(var_name, var_size, nostack)
+        scope.register_variable(var_name, var_size, nostack)
 
         file.write(f'# {var_name} declaration \n')
 
@@ -615,7 +619,6 @@ def generate_statement(ctx, statement, scope):
             else:
                 file.write(f"{(ctx.get_variable_id(var_name))} = \"\";\n")
         else:
-            scope.register_variable(var_name, 1)
 
             # write initialization expression if present
             if statement['init'] != None:
@@ -812,8 +815,8 @@ def generate_block(ctx, block):
 
     # end of block
     if not did_return:
-        if scope.allocated_variables:
-            for var_name in scope.allocated_variables:
+        if scope.declared_variables:
+            for var_name in scope.declared_variables:
                 ctx.remove_variable(var_name)
             
             file.write(macro_stack_pop(scope.size))
@@ -848,7 +851,7 @@ def generate_procedure(func_ctx, definition):
 def check_if_recursive(functions, func, name):
     for ref in func.func_references:
         if ref in BUILTIN_METHODS: return False
-        if ref == name or check_if_recursive(functions, functions[ref], name):
+        if ref == name and ref != func.name and check_if_recursive(functions, functions[ref], name):
             return True
     
     return False

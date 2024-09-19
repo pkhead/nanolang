@@ -2,7 +2,7 @@
 
 costume "../alien-in-suit.png"
 
-when flag
+func nostack(): void
     var my_var = "original variable"
 
     if true
@@ -11,4 +11,26 @@ when flag
     end
 
     say_wait(my_var, 2)
+end
+
+# *&my_var:
+#   1. get address of my_var
+#   2. get value at that address
+# output will be exactly the same as writing my_var directly,
+# but it will trick the compiler into forcing the variables onto a
+# stack instead of a unaddressable scratch variable. for testing purposes.
+func stack(): void
+    var my_var = "original variable"
+
+    if true
+        var my_var = "shadowing variable"
+        say_wait(*&my_var, 2)
+    end
+
+    say_wait(*&my_var, 2)
+end
+
+when flag
+    nostack()
+    stack()
 end
