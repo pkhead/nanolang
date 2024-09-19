@@ -10,22 +10,29 @@ class Block:
         self.parameters = {}
         self.parent = parent
         self.statements = []
+
+        self.global_variables = {}
+        self.func_references = set()
         self.return_type = None
         self.top_level = False
 
         if parent:
+            self.global_variables = parent.global_variables
             self.return_type = parent.return_type
+            self.func_references = parent.func_references
     
-    def declare_variable(self, var_name, var_type):
+    def declare_variable(self, var_name, var_type, metadata=None):
         self.variables[var_name] = {
             'name': var_name,
-            'type': var_type
+            'type': var_type,
+            'metadata': metadata
         }
     
-    def declare_parameter(self, var_name, var_type):
+    def declare_parameter(self, var_name, var_type, metadata=None):
         self.parameters[var_name] = {
             'name': var_name,
-            'type': var_type
+            'type': var_type,
+            'metadata': metadata
         }
     
     def get_variable_info(self, var_name):
@@ -33,6 +40,8 @@ class Block:
             return self.variables[var_name]
         elif var_name in self.parameters:
             return self.parameters[var_name]
+        elif var_name in self.global_variables:
+            return self.global_variables[var_name]
         else:
             return None if self.parent == None else self.parent.get_variable_info(var_name)
 
@@ -178,6 +187,7 @@ class Function:
         self.parameters = params
         self.definition = None
         self.attributes = attribs
+        self.func_references = set()
 
 ATTRIBUTES = ['warp']
 HAT_EVENTS = {
@@ -258,6 +268,8 @@ def parse_function_call(program, tokens, block, id_token):
     if len(func_args) != len(func_data.parameters):
         raise CompilationException.from_token(id_token, f"not enough function arguments for '{func_name}'")
     
+    block.func_references.add(func_name)
+    
     return {
         'function': func_data,
         'builtin': is_builtin,
@@ -265,7 +277,6 @@ def parse_function_call(program, tokens, block, id_token):
     }
 
 def parse_expression(program, tokens, block, order=0):
-    # TODO:
     # order 0: or
     # order 1: and
     # order 2: == !=
@@ -406,6 +417,11 @@ def parse_expression(program, tokens, block, order=0):
             expr = parse_expression(program, tokens, block, order)
             if not expr.can_address:
                 raise CompilationException.from_token(tok, "can only take address of lvalue")
+            
+            if expr.op == 'var_get':
+                var_info = block.get_variable_info(expr.id)
+                var_info['metadata']['needs_ref'] = True
+            
             return UnaryOperator('op_addr', ValueType.pointer_to(expr.type), expr)
         
         # indirect
@@ -670,6 +686,13 @@ def parse_statement(program, tokens, block):
     elif tok.is_keyword('var'):
         var_name = tokens.pop().get_identifier()
 
+        # to be stored in block variable data and
+        # the statement structure, for later optimization
+        # by the scratchblocks generator
+        var_metadata = {
+            'needs_ref': False 
+        }
+
         # two valid forms: one with a specified type and one without
         if tokens.peek().is_symbol(':'):
             tokens.pop()
@@ -693,7 +716,8 @@ def parse_statement(program, tokens, block):
                 'type': 'var_declare',
                 'var_name': var_name,
                 'var_type': var_type,
-                'init': expr
+                'init': expr,
+                'metadata': var_metadata
             }
             print("EXPR: " + str(expr))
         
@@ -703,10 +727,11 @@ def parse_statement(program, tokens, block):
                 'type': 'var_declare',
                 'var_name': var_name,
                 'var_type': var_type,
-                'init': None
+                'init': None,
+                'metadata': var_metadata
             }
         
-        block.declare_variable(var_name, var_type)
+        block.declare_variable(var_name, var_type, metadata=var_metadata)
         return statement
 
     elif tok.is_keyword('if'):
@@ -825,6 +850,7 @@ def parse_function(program, tokens, function):
         func_block.declare_parameter(param['name'], param['type'])
     
     function.definition = parse_block(program, tokens, func_block)
+    function.func_references = func_block.func_references
 
 def parse_program(tokens, project_dir_path):
     program = {}
@@ -832,6 +858,7 @@ def parse_program(tokens, project_dir_path):
     program['sounds'] = []
     program['functions'] = {}
     program['events'] = []
+    program['variables'] = {}
 
     attributes = []
 
@@ -863,6 +890,37 @@ def parse_program(tokens, project_dir_path):
 
             asset_path = asset_path.replace('\\', '/') # bruh
             program['sounds'].append(asset_path)
+        
+        # sprite variable definition
+        elif tok.is_keyword('var'):
+            tok = tokens.pop()
+            var_name = tok.get_identifier()
+            var_type = None
+
+            if tokens.peek().is_symbol(':'):
+                tokens.pop()
+                var_type = parse_type(program, tokens)
+
+            next_tok = tokens.peek()        
+            if not next_tok.is_symbol('='):
+                raise CompilationException.from_token(tok, f"expected '=', got " + str(next_tok))
+            tokens.pop()
+
+            value_expr = parse_expression(program, tokens, Block())
+            if not value_expr.is_const():
+                raise CompilationException.from_token(next_tok, f"expected constant expression for sprite variable initial value")
+
+            if var_type == None:
+                var_type = value_expr.type
+            elif not var_type.is_same(value_expr.type):
+                raise CompilationException.from_token(next_tok, f"attempt to assign a {str(value_expr.type)} to a {str(var_type)}")
+            
+            program['variables'][var_name] = {
+                'name': var_name,
+                'type': var_type,
+                'init': value_expr.eval(),
+                'metadata': { 'needs_ref': True }
+            }
         
         # function definition
         elif tok.is_keyword('func'):
@@ -920,7 +978,7 @@ def parse_program(tokens, project_dir_path):
 
                 # get event parameter expression, and make sure it's a compile-time constant
                 # and that it is the required type
-                param_expr = parse_expression(program, tokens, None)
+                param_expr = parse_expression(program, tokens, Block())
                 if not param_expr.is_const():
                     raise CompilationException.from_token(tok, f"event parameter must be a constant expression")
                 

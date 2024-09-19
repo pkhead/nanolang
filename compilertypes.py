@@ -4,7 +4,6 @@ class ValueType:
     STRING = 2
     BOOL = 3
 
-    # TODO: pointers
     POINTER = 4
 
     def __init__(self, type, base_type=None):

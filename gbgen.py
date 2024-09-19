@@ -256,6 +256,12 @@ class SpriteContext:
         self.program = program
         self.file = file
         self.function_block_names = {}
+        self._next_id = 0
+    
+    def new_var_id(self):
+        id = self._next_id
+        self._next_id = self._next_id + 1
+        return "_" + str(id)
 
 
 class FunctionContext:
@@ -270,6 +276,7 @@ class FunctionContext:
         self.does_return = False
         self.active_variables = []
         self.active_tempvars = []
+        self.recursive = False
         self._offset = 0
         
         # arguments
@@ -281,7 +288,8 @@ class FunctionContext:
             self.arguments.insert(0, {
                 'name': param['name'],
                 'size': param['type'].size(),
-                'offset': argoffset
+                'offset': argoffset,
+                'id': None
             })
         
         # calculate return value location
@@ -290,14 +298,26 @@ class FunctionContext:
         else:
             self.return_offset = 0
 
-    def new_variable(self, var_name, size):
+    def new_variable(self, var_name, size, nostack=False):
         assert(size > 0)
-        self.active_variables.insert(0, {
-            'name': var_name,
-            'size': size,
-            'offset': self._offset
-        })
-        self._offset += size
+
+        if nostack:
+            assert(size == 1)
+
+            self.active_variables.insert(0, {
+                'name': var_name,
+                'size': size,
+                'offset': None,
+                'id': self.sprite_ctx.new_var_id() + "_" + var_name
+            })
+        else:
+            self.active_variables.insert(0, {
+                'name': var_name,
+                'size': size,
+                'offset': self._offset,
+                'id': None
+            })
+            self._offset += size
     
     # non-temporal location on the stack unassociated
     # with a variable
@@ -319,13 +339,17 @@ class FunctionContext:
     def remove_variable(self, var_name):
         for i in range(len(self.active_variables)):
             v = self.active_variables[i]
+
             if v['name'] == var_name:
-                self._offset -= v['size']
+                if v['offset'] != None:
+                    self._offset -= v['size']
+                
                 del self.active_variables[i]
                 return
         
         raise Exception('could not find variable ' + var_name)
     
+    ## Get offset of variable on stack.
     def get_variable_offset(self, var_name):
         for v in self.active_variables:
             if v['name'] == var_name:
@@ -334,14 +358,24 @@ class FunctionContext:
         for v in self.arguments:
             if v['name'] == var_name:
                 return v['offset']
+    
+    ## Get offset of variable optimized to not be on the stack.
+    def get_variable_id(self, var_name):
+        for v in self.active_variables:
+            if v['name'] == var_name:
+                return v['id']
+        
+        for v in self.arguments:
+            if v['name'] == var_name:
+                return v['id']
 
 class Scope:
     def __init__(self):
-        self.declared_variables = []
+        self.allocated_variables = []
         self.size = 0
     
-    def declare_variable(self, var_name, var_size):
-        self.declared_variables.append(var_name)
+    def register_variable(self, var_name, var_size):
+        self.allocated_variables.append(var_name)
         self.size += var_size
 
 class ExpressionStack:
@@ -399,9 +433,14 @@ def generate_expression(ctx, expr, stack, prefer_lvalue=False):
         return gs_literal(expr.value)
 
     elif expr.op == 'var_get':
-        offset = ctx.get_variable_offset(expr.id)
-        memloc = f"memory[stack_ptrs[$stack_id]] + ({offset})"
-        return ExpressionLvalue(memloc) if prefer_lvalue else ExpressionLvalue(memloc).value
+        var_id = ctx.get_variable_id(expr.id)
+
+        if var_id != None:
+            return var_id
+        else:
+            offset = ctx.get_variable_offset(expr.id)
+            memloc = f"memory[stack_ptrs[$stack_id]] + ({offset})"
+            return ExpressionLvalue(memloc) if prefer_lvalue else ExpressionLvalue(memloc).value
     
     elif expr.op == 'func_call':
         generate_func_call(ctx, ctx.sprite_ctx.program['functions'][expr.id], expr.data)
@@ -457,7 +496,13 @@ def generate_expression(ctx, expr, stack, prefer_lvalue=False):
 
     elif expr.op == 'op_index':
         value = generate_expression(ctx, expr.data, stack)
-        var_value = macro_get_from_stack_base(ctx.get_variable_offset(expr.id))
+
+        var_id = ctx.get_variable_id(expr.id)
+        if var_id != None:
+            var_value = var_id
+        else:
+            var_value = macro_get_from_stack_base(ctx.get_variable_offset(expr.id))
+        
         return f"memory[{var_value} + {value}]"
 
     elif isinstance(expr, BinaryOperator):
@@ -532,6 +577,19 @@ def get_assignment_location(ctx, loc, expr_stack, assignment):
     else:
         raise Exception("unknown assignment type " + assignment['type'])
 
+# for nostack variables
+# tbh i don't really know what i'm doing lmao
+def get_assignment_location2(ctx, ptr, expr_stack, assignment):
+    if assignment['type'] == 'set' or assignment['type'] == 'inc':
+        return [ptr, assignment['type'], assignment['value']]
+    
+    elif assignment['type'] == 'index':
+        expr = generate_expression(ctx, assignment['index'], expr_stack)
+        res = get_assignment_location(ctx, f"({ptr} + {expr})", expr_stack, assignment['assignment'])
+        return res
+    else:
+        raise Exception("unknown assignment type " + assignment['type'])
+
 def generate_statement(ctx, statement, scope):
     file = ctx.sprite_ctx.file
     opcode = statement['type']
@@ -539,53 +597,87 @@ def generate_statement(ctx, statement, scope):
     # opcode var_declare
     if opcode == 'var_declare':
         var_name = statement['var_name']
-        scope.declare_variable(var_name, 1)
-        ctx.new_variable(var_name, 1)
+        nostack = not (ctx.recursive or statement['metadata']['needs_ref'] or statement['var_type'].size() != 1)
+        ctx.new_variable(var_name, 1, nostack)
 
         file.write(f'# {var_name} declaration \n')
 
-        # write initialization expression if present
-        if statement['init'] != None:
-            push_expression_result(ctx, statement['init'])
-        
-        # no initialization expression; initialize to an empty string
+        if nostack:
+            if statement['init'] != None:
+                push_expression_result(ctx, statement['init'], to_temp=True)
+                file.write(f"{(ctx.get_variable_id(var_name))} = temp;\n")
+            else:
+                file.write(f"{(ctx.get_variable_id(var_name))} = \"\";\n")
         else:
-            file.write(macro_stack_push('\"\"') + "\n")
+            scope.register_variable(var_name, 1)
+
+            # write initialization expression if present
+            if statement['init'] != None:
+                push_expression_result(ctx, statement['init'])
+            
+            # no initialization expression; initialize to an empty string
+            else:
+                file.write(macro_stack_push('\"\"') + "\n")
         
     # opcode var_assign
     elif opcode == 'var_assign':
         var_name = statement['var_name']
-        var_offset = ctx.get_variable_offset(var_name)
         expr_stack = ExpressionStack()
 
-        assignment = get_assignment_location(ctx, f"(memory[stack_ptrs[$stack_id]] + ({(var_offset)}))", expr_stack, statement['assignment'])
+        var_id = ctx.get_variable_id(var_name)
+        if var_id != None: # variable is not on the stack
+            assignment = statement['assignment']
 
-        location = assignment[0]
-        assign_type = assignment[1]
-        assign_value = assignment[2]
-        
-        expr = generate_expression(ctx, assign_value, expr_stack)
-        location = expr_stack.finalize_stack_references(location)
-        expr = expr_stack.finalize_stack_references(expr)
+            if assignment['type'] == 'index':
+                assignment = get_assignment_location2(ctx, var_id, expr_stack, assignment)
+                
+                location = assignment[0]
+                assign_type = assignment[1]
+                assign_value = assignment[2]
+                
+                expr = generate_expression(ctx, assign_value, expr_stack)
+                location = expr_stack.finalize_stack_references(location)
+                expr = expr_stack.finalize_stack_references(expr)
 
-        # set variable to expression result and clear
-        # values added to the stack by the expression (if present)
-        if expr_stack.stack_size > 0:
-            file.write(f"temp = {expr};\n")
+                if assign_type == 'inc':
+                    file.write(f"memory[{location}] = memory[{location}] + {expr};\n")
+                else: # type == 'set'
+                    assert(assign_type == 'set')
+                    file.write(f"memory[{location}] = {expr};\n")                
+
+            else:
+                assert(assignment['type'] == 'set' or assignment['type'] == 'inc')
+
+                assign_type = assignment['type']
+                assign_value = assignment['value']
+
+                expr = expr_stack.finalize_stack_references(generate_expression(ctx, assign_value, expr_stack))
+                
+                if assign_type == 'inc':
+                    file.write(f"{var_id} += {expr};\n")
+                else:
+                    file.write(f"{var_id} = {expr};\n")
+
+        else:
+            var_offset = ctx.get_variable_offset(var_name)
+
+            assignment = get_assignment_location(ctx, f"(memory[stack_ptrs[$stack_id]] + ({(var_offset)}))", expr_stack, statement['assignment'])
+
+            location = assignment[0]
+            assign_type = assignment[1]
+            assign_value = assignment[2]
             
+            expr = generate_expression(ctx, assign_value, expr_stack)
+            location = expr_stack.finalize_stack_references(location)
+            expr = expr_stack.finalize_stack_references(expr)
+
             if assign_type == 'inc':
-                file.write(f"temp += memory[{location}]")
-            
-            file.write(f"memory[{location}] = temp;\n")
-            expr_stack.clear(file)
-        elif assign_type == 'inc':
-            file.write(f"memory[{location}] = memory[{location}] + {expr};\n")
-            # file.write(macro_set_from_stack_base(
-            #     var_offset, f"(({(location)}) + ({expr}))"
-            # ) + "\n")
-        else: # type == 'set'
-            file.write(f"memory[{location}] = {expr};\n")
-            # file.write(macro_set_from_stack_base(var_offset, expr) + "\n")
+                file.write(f"memory[{location}] = memory[{location}] + {expr};\n")
+            else: # type == 'set'
+                assert(assign_type == 'set')
+                file.write(f"memory[{location}] = {expr};\n")
+
+        expr_stack.clear(file)
     
     # opcode func_call
     elif opcode == 'func_call':
@@ -714,8 +806,8 @@ def generate_block(ctx, block):
 
     # end of block
     if not did_return:
-        if scope.declared_variables:
-            for var_name in scope.declared_variables:
+        if scope.allocated_variables:
+            for var_name in scope.allocated_variables:
                 ctx.remove_variable(var_name)
             
             file.write(macro_stack_pop(scope.size))
@@ -745,6 +837,17 @@ def generate_procedure(func_ctx, definition):
         file.write(macro_stack_pop(1) + "\n") # pop base of current stack frame
         file.write("memory[stack_ptrs[$stack_id]] = temp;\n") # restore base of old stack frame
 
+# check if given function is recursive
+# searches through the tree of function references to see if it loops
+def check_if_recursive(functions, func, name):
+    for ref in func.func_references:
+        if ref in BUILTIN_METHODS: return False
+        if ref == name or check_if_recursive(functions, functions[ref], name):
+            return True
+    
+    return False
+        
+
 def generate_program(program, file, is_stage):
     sprite_ctx = SpriteContext(program, file)
 
@@ -763,6 +866,7 @@ def generate_program(program, file, is_stage):
         func_ctx = FunctionContext(sprite_ctx, func.parameters, func.type)
         func_ctx.warp = 'warp' in func.attributes
         func_ctx.does_return = not func.type.is_void()
+        func_ctx.recursive = check_if_recursive(program['functions'], func, func.name)
 
         block_name = "_" + func.name
         sprite_ctx.function_block_names[func.name] = block_name
