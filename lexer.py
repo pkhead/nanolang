@@ -89,6 +89,56 @@ class CharacterQueue:
     def push(self, ch):
         self.queue.append(ch)
 
+SYMBOLS = [
+    '@', ';', ':', ',',
+    '{', '}', '(', ')', '[', ']',
+    '=', '..',
+
+    # operators
+    '+', '-', '*', '/', '&',
+    '==', '>=', '<=', '>', '<', '!=', '!', '&&', '||',
+    '+=', '-=', '*=', '/=',
+]
+
+def get_symbol(file, char, lineno, linecol):
+    if not any(x[0] == char for x in SYMBOLS):
+        return None
+    
+    # filter out the specific symbol
+    candidates = SYMBOLS
+    i = 0
+    sym = ""
+
+    while True:
+        candidates = [x for x in candidates if (i < len(x) and x[i] == char)]
+
+        if not candidates:
+            if not sym in SYMBOLS:
+                raise CompilationException(lineno, linecol, "unknown symbol")
+            file.push(char)
+
+            return Token(lineno, linecol, Token.TYPE_SYMBOL, sym)
+        
+        if len(candidates) == 1:
+            sym += char
+            while len(sym) < len(candidates[0]):
+                sym += file.read(1)
+            
+            if sym != candidates[0]:
+                for ch in sym[1:]: # cancel symbol read...
+                    file.push(ch)
+                return None
+            else:
+                return Token(lineno, linecol, Token.TYPE_SYMBOL, candidates[0])
+
+        if char == '\n' or not char:
+            raise CompilationException(lineno, linecol, "unknown symbol")
+        
+        sym += char
+        char = file.read(1)
+
+        i += 1    
+
 def parse_tokens(file_path):
     KEYWORDS = Token.KEYWORD_TYPES + [
         'func', 'var',
@@ -103,17 +153,6 @@ def parse_tokens(file_path):
         'when',
 
         'deleteclone',
-    ]
-
-    SYMBOLS = [
-        '@', ';', ':', ',',
-        '{', '}', '(', ')', '[', ']',
-        '=',
-
-        # operators
-        '+', '-', '*', '/', '&',
-        '==', '>=', '<=', '>', '<', '!=', '!', '&&', '||',
-        '+=', '-=', '*=', '/=',
     ]
 
     NUMERIC_CHARS = ['.', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
@@ -143,19 +182,19 @@ def parse_tokens(file_path):
 
             linecol += 1
             
-            is_symbol_start = any(x[0] == char for x in SYMBOLS)
-            if is_symbol_start or char.isspace() or char == '#' or char == '"' or char == '\'':
+            symbol = get_symbol(file, char, lineno, linecol)
+            if symbol or char.isspace() or char == '#' or char == '"' or char == '\'':
                 if str_buf:
                     word = ''.join(str_buf)
 
                     if is_number:
-                        tokens.append(Token(lineno, linecol, Token.TYPE_NUMBER, word))
+                        tokens.append(Token(token_lineno, token_linecol, Token.TYPE_NUMBER, word))
                         # print("NUMBER: " + word)
                     elif word in KEYWORDS:
-                        tokens.append(Token(lineno, linecol, Token.TYPE_KEYWORD, word))
+                        tokens.append(Token(token_lineno, token_linecol, Token.TYPE_KEYWORD, word))
                         # print("KEYWORD: " + word)
                     else:
-                        tokens.append(Token(lineno, linecol, Token.TYPE_IDENTIFIER, word))
+                        tokens.append(Token(token_lineno, token_linecol, Token.TYPE_IDENTIFIER, word))
                         # print("IDENTIFIER: " + word)
                     
                     str_buf.clear()
@@ -205,49 +244,9 @@ def parse_tokens(file_path):
                             lineno += 1
                             linecol = 0
                 
-                elif is_symbol_start:                    
-                    token_lineno = lineno
-                    token_linecol = linecol
-
-                    # filter out the specific symbol
-                    candidates = SYMBOLS
-                    i = 0
-                    sym = ""
-
-                    while True:
-                        candidates = [x for x in candidates if (i < len(x) and x[i] == char)]
-
-                        if not candidates:
-                            if not sym in SYMBOLS:
-                                raise CompilationException(token_lineno, token_linecol, "unknown symbol")
-                            file.push(char)
-                            tokens.append(Token(token_lineno, token_linecol, Token.TYPE_SYMBOL, sym))
-                            break
-                        
-                        if len(candidates) == 1:
-                            sym += char
-                            while len(sym) < len(candidates[0]):
-                                sym += file.read(1)
-                            
-                            if sym != candidates[0]:
-                                raise CompilationException(token_lineno, token_linecol, "unknown symbol")
-                            
-                            tokens.append(Token(token_lineno, token_linecol, Token.TYPE_SYMBOL, candidates[0]))
-                            break
-
-                        if char == '\n' or not char:
-                            raise CompilationException(token_lineno, token_linecol, "unknown symbol")
-                        
-                        sym += char
-                        char = file.read(1)
-
-                        if char == '\n':
-                            lineno += 1
-                            linecol = 1
-                        else:
-                            linecol += 1
-                        i += 1
-                    # print("SYMBOL: " + char)
+                elif symbol:                    
+                    linecol += len(symbol.value)
+                    tokens.append(symbol)
             else:
                 # determine if word is text or number at the start
                 if not str_buf:

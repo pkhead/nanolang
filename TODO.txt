@@ -6,6 +6,8 @@
 - indirect assignment
 - wait until X -> repeat while X {}  (unless expression stack is empty, otherwise it compiles directly into wait until)
 - ability to report more than one error
+- bug: sprite variable ids may overlap with stage variable ids
+- optimization: attach argument to custom block instead of saving to stack
 
 - assigning to temp here does not work with structs:
 - if expr_stack.stack_size > 0:

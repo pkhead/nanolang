@@ -181,7 +181,8 @@ class IdentifierOperator(ExpressionNode):
         raise Exception("cannot evaluate identifier node")
 
 class Function:
-    def __init__(self, name, type, params, attribs):
+    def __init__(self, idtok, name, type, params, attribs):
+        self.idtok = idtok
         self.name = name
         self.type = type
         self.parameters = params
@@ -950,8 +951,12 @@ def parse_program(tokens, project_dir_path, stage=None):
         elif tok.is_keyword('func'):
             tok = tokens.pop()
             func_name = tok.get_identifier()
+
+            declared_func = None
             if func_name in program['functions']:
-                raise CompilationException.from_token(tok, f"function '{func_name}' already defined")
+                declared_func = program['functions'][func_name]
+                if declared_func.definition:
+                    raise CompilationException.from_token(tok, f"function '{func_name}' already defined")
             
             assert(tokens.pop().is_symbol('('))
 
@@ -961,7 +966,14 @@ def parse_program(tokens, project_dir_path, stage=None):
                 while True:
                     param_name = tokens.pop().get_identifier()
                     assert(tokens.pop().is_symbol(':'))
+                    next_tok = tokens.peek()
                     param_type = parse_type(program, tokens)
+
+                    # throw error on type mismatch with forward
+                    # declaration
+                    if declared_func:
+                        if not declared_func.parameters[len(func_params)]['type'].is_same(param_type):
+                            raise CompilationException.from_token(next_tok, f"type of parameter {(len(func_params) + 1)} does not match declaration")
 
                     func_params.append({
                         'name': param_name,
@@ -976,12 +988,28 @@ def parse_program(tokens, project_dir_path, stage=None):
             else:
                 assert(tokens.pop().is_symbol(')'))
             
+            if declared_func and len(declared_func.parameters) != len(func_params):
+                raise CompilationException.from_token(tok, f"parameters do not match declaration")
+            
             # read function return type
             assert(tokens.pop().is_symbol(':'))
 
             func_type = parse_type(program, tokens, True)
-            program['functions'][func_name] = Function(func_name, func_type, func_params, attributes[:])
-            parse_function(program, tokens, program['functions'][func_name])
+
+            if declared_func and not declared_func.type.is_same(func_type):
+                raise CompilationException.from_token(tok, f"return type does not match declaration")
+            
+            if not declared_func:
+                declared_func = Function(tok, func_name, func_type, func_params, attributes[:])
+                program['functions'][func_name] = declared_func
+            else:
+                declared_func.attributes = attributes[:]
+            
+            # .. = no definition, forward declaration
+            if tokens.peek().is_symbol('..'):
+                tokens.pop()
+            else:
+                parse_function(program, tokens, declared_func)
 
             attributes.clear()
         
@@ -1040,5 +1068,10 @@ def parse_program(tokens, project_dir_path, stage=None):
         
         else:
             raise Exception("unexpected " + str(tok))
+    
+    # make sure all functions have a definition
+    for func in program['functions'].values():
+        if not func.definition:
+            raise CompilationException.from_token(func.idtok, f"function {(func.name)} is declared but not defined")
     
     return program

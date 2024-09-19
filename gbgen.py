@@ -851,7 +851,7 @@ def generate_procedure(func_ctx, definition):
 def check_if_recursive(functions, func, name):
     for ref in func.func_references:
         if ref in BUILTIN_METHODS: return False
-        if ref == name and ref != func.name and check_if_recursive(functions, functions[ref], name):
+        if ref == name or (ref != func.name and check_if_recursive(functions, functions[ref], name)):
             return True
     
     return False
@@ -934,13 +934,16 @@ def generate_program(program, file, stage=None):
     static_memory_init(sprite_ctx, stage)
 
     for func in program['functions'].values():
+        block_name = "_" + func.name
+        sprite_ctx.function_block_names[func.name] = block_name
+    
+    for func in program['functions'].values():
         func_ctx = FunctionContext(sprite_ctx, func.parameters, func.type)
         func_ctx.warp = 'warp' in func.attributes
         func_ctx.does_return = not func.type.is_void()
         func_ctx.recursive = check_if_recursive(program['functions'], func, func.name)
 
-        block_name = "_" + func.name
-        sprite_ctx.function_block_names[func.name] = block_name
+        block_name = sprite_ctx.function_block_names[func.name]
         
         if not func_ctx.warp:
             file.write("nowarp ")
