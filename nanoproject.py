@@ -8,6 +8,14 @@ from gbgen import generate_program
 class ProjectCompilationException(Exception):
     pass
 
+def file_ast(abspath, project_dir, output_dir, stage=None):
+    tokens = TokenQueue(parse_tokens(abspath))
+    return parse_program(tokens, os.path.relpath(project_dir, output_dir), stage)
+
+def emit_ast(ast, sprite_name, output_dir, stage=None):
+    with open(os.path.join(output_dir, sprite_name + '.gs'), 'w') as f:
+        return generate_program(ast, f, None if stage == None else stage)
+
 def compile(project_dir, output_dir, output_file=None):
     project_dir = os.path.abspath(project_dir)
     output_dir = os.path.abspath(output_dir)
@@ -37,9 +45,24 @@ def compile(project_dir, output_dir, output_file=None):
     if not has_stage:
         raise ProjectCompilationException("no stage.nano")
     
+
+    # first, generate asts
+    targets = []
+    targets.append({
+        'ast': file_ast(os.path.join(project_dir, 'stage.nano'), project_dir, output_dir),
+        'name': 'stage'
+    })
+
     for file_info in nano_files:
-        tokens = TokenQueue(parse_tokens(file_info['abspath']))
-        program = parse_program(tokens, os.path.relpath(project_dir, output_dir))
-        
-        with open(os.path.join(output_dir, file_info['extsplit'][0] + '.gs'), 'w') as f:
-            generate_program(program, f, file_info['filename'] == 'stage.nano')
+        if file_info['filename'] == 'stage.nano': continue
+        targets.append({
+            'ast': file_ast(os.path.join(project_dir, file_info['filename']), project_dir, output_dir, targets[0]['ast']),
+            'name': file_info['extsplit'][0]
+        })
+
+    # then, emit files
+    stage_gen = None
+    for target in targets:
+        gen = emit_ast(target['ast'], target['name'], output_dir, stage_gen)
+        if target['name'] == 'stage':
+            stage_gen = gen

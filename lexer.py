@@ -6,6 +6,7 @@ class Token:
     TYPE_IDENTIFIER = 2
     TYPE_NUMBER = 3
     TYPE_STRING = 4
+    TYPE_EOF = 5
 
     KEYWORD_TYPES = ['void', 'string', 'number', 'bool']
     EVENT_NAMES = ['flag', 'keypress', 'click', 'broadcast']
@@ -27,6 +28,8 @@ class Token:
             return "number"
         elif self.type == Token.TYPE_STRING:
             return "string"
+        elif self.type == Token.TYPE_EOF:
+            return "eof"
         else:
             raise CompilationException.from_token(self, "INTERNAL: unknown token type")
             
@@ -48,18 +51,19 @@ class TokenQueue:
         self.list = p_list
         self.index = 0
     
+    def eof(self):
+        return self.index >= len(self.list) - 1
+    
     def pop(self):
-        if self.index >= len(self.list):
-            raise CompilationException.from_token(self.list[-1], 'unexpected eof')
-        
         value = self.list[self.index]
+
+        if value.type == Token.TYPE_EOF:
+            raise CompilationException.from_token(value, 'unexpected eof')
+
         self.index += 1
         return value
     
     def peek(self):
-        if self.index >= len(self.list):
-            raise CompilationException.from_token(self.list[-1], 'unexpected eof')
-        
         return self.list[self.index]
     
     def __bool__(self):
@@ -271,4 +275,5 @@ def parse_tokens(file_path):
                 lineno += 1
                 linecol = 0
     
+        tokens.append(Token(lineno, linecol, Token.TYPE_EOF, None))
     return tokens

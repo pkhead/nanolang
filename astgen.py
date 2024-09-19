@@ -11,13 +11,13 @@ class Block:
         self.parent = parent
         self.statements = []
 
-        self.global_variables = {}
+        self.static_variables = {} # sprite/stage variables
         self.func_references = set()
         self.return_type = None
         self.top_level = False
 
         if parent:
-            self.global_variables = parent.global_variables
+            self.static_variables = parent.static_variables
             self.return_type = parent.return_type
             self.func_references = parent.func_references
     
@@ -40,8 +40,8 @@ class Block:
             return self.variables[var_name]
         elif var_name in self.parameters:
             return self.parameters[var_name]
-        elif var_name in self.global_variables:
-            return self.global_variables[var_name]
+        elif var_name in self.static_variables:
+            return self.static_variables[var_name]
         else:
             return None if self.parent == None else self.parent.get_variable_info(var_name)
 
@@ -712,6 +712,10 @@ def parse_statement(program, tokens, block):
             
             if not expr.type.is_same(var_type):
                 raise CompilationException.from_token(tok, f"attempt to assign a {str(expr.type)} to a {str(var_type)}")
+            
+            if var_type.size() != 1:
+                var_metadata['needs_ref'] = True
+            
             statement = {
                 'type': 'var_declare',
                 'var_name': var_name,
@@ -723,6 +727,8 @@ def parse_statement(program, tokens, block):
         
         # variable declaration without initial assignment
         else:
+            if var_type == None:
+                raise CompilationException.from_token(tok, "uninitialized declaration must name a type")
             statement = {
                 'type': 'var_declare',
                 'var_name': var_name,
@@ -852,17 +858,25 @@ def parse_function(program, tokens, function):
     function.definition = parse_block(program, tokens, func_block)
     function.func_references = func_block.func_references
 
-def parse_program(tokens, project_dir_path):
+def parse_program(tokens, project_dir_path, stage=None):
     program = {}
     program['costumes'] = []
     program['sounds'] = []
     program['functions'] = {}
     program['events'] = []
     program['variables'] = {}
+    program['static_order'] = []
+
+    if stage:
+        for k in stage['variables']:
+            program['variables'][k] = stage['variables'][k]
 
     attributes = []
+    toplevel_block = Block()
+    toplevel_block.static_variables = program['variables']
 
     while tokens:
+        if tokens.eof(): break
         tok = tokens.pop()
 
         # costumes
@@ -897,30 +911,40 @@ def parse_program(tokens, project_dir_path):
             var_name = tok.get_identifier()
             var_type = None
 
+            if var_name in program['variables']:
+                raise CompilationException.from_token(tok, f"redefinition of static variable {var_name}")
+
             if tokens.peek().is_symbol(':'):
                 tokens.pop()
                 var_type = parse_type(program, tokens)
 
-            next_tok = tokens.peek()        
+            next_tok = tokens.peek()
+            var_init = ""
+
             if not next_tok.is_symbol('='):
-                raise CompilationException.from_token(tok, f"expected '=', got " + str(next_tok))
-            tokens.pop()
+                if var_type is None:
+                    raise CompilationException.from_token(tok, f"uninitialized declaration must name a type")
+            else:
+                tokens.pop()
 
-            value_expr = parse_expression(program, tokens, Block())
-            if not value_expr.is_const():
-                raise CompilationException.from_token(next_tok, f"expected constant expression for sprite variable initial value")
+                value_expr = parse_expression(program, tokens, toplevel_block)
+                if not value_expr.is_const():
+                    raise CompilationException.from_token(next_tok, f"expected constant expression for sprite variable initial value")
 
-            if var_type == None:
-                var_type = value_expr.type
-            elif not var_type.is_same(value_expr.type):
-                raise CompilationException.from_token(next_tok, f"attempt to assign a {str(value_expr.type)} to a {str(var_type)}")
+                if var_type == None:
+                    var_type = value_expr.type
+                elif not var_type.is_same(value_expr.type):
+                    raise CompilationException.from_token(next_tok, f"attempt to assign a {str(value_expr.type)} to a {str(var_type)}")
+                
+                var_init = value_expr.eval()
             
             program['variables'][var_name] = {
                 'name': var_name,
                 'type': var_type,
-                'init': value_expr.eval(),
-                'metadata': { 'needs_ref': True }
+                'init': var_init,
+                'metadata': { 'needs_ref': var_type.size() != 1 }
             }
+            program['static_order'].append(var_name)
         
         # function definition
         elif tok.is_keyword('func'):
@@ -978,7 +1002,7 @@ def parse_program(tokens, project_dir_path):
 
                 # get event parameter expression, and make sure it's a compile-time constant
                 # and that it is the required type
-                param_expr = parse_expression(program, tokens, Block())
+                param_expr = parse_expression(program, tokens, toplevel_block)
                 if not param_expr.is_const():
                     raise CompilationException.from_token(tok, f"event parameter must be a constant expression")
                 
@@ -991,7 +1015,7 @@ def parse_program(tokens, project_dir_path):
                     raise CompilationException.from_token(tokens.peek(), f"expected ')'")
                 tokens.pop()
             
-            parent_block = Block()
+            parent_block = Block(toplevel_block)
             parent_block.return_type = ValueType(ValueType.VOID)
 
             program['events'].append({

@@ -40,9 +40,6 @@ from builtin_methods import BUILTIN_METHODS
 # return value allocation. arguments will then be accessed by the caller from negative offsets of its
 # stack base. arguments will be cleaned up by the caller.
 
-# user function prefix: "_"
-# internal function prefix: "internal_"
-
 def gs_literal(value):
     if isinstance(value, str):
         out = ['"']
@@ -71,9 +68,6 @@ def gs_literal(value):
     else:
         return str(value)
 
-def generate_block(program, file, block):
-    file.write("# " + str(block) + "\n")
-
 stage_boilerplate = """
 proc nano_init {
     delete memory;
@@ -88,8 +82,10 @@ proc nano_init {
     memory[2] = 0;
     memory[3] = 0;
 }
+
 onflag {
     nano_init;
+    broadcast "nanoinit"; # initialize sprite variables and such
     broadcast "nanostart";
 }
 """
@@ -256,7 +252,9 @@ class SpriteContext:
         self.program = program
         self.file = file
         self.function_block_names = {}
+        self.static_variables = {}
         self._next_id = 0
+        self.staticalloc = "nano_staticalloc" # name of staticalloc variable - different for stage
     
     def new_var_id(self):
         id = self._next_id
@@ -350,14 +348,19 @@ class FunctionContext:
         raise Exception('could not find variable ' + var_name)
     
     ## Get offset of variable on stack.
-    def get_variable_offset(self, var_name):
+    def get_variable_location(self, var_name):
         for v in self.active_variables:
             if v['name'] == var_name:
-                return v['offset'] + 1 # add one to account for the internal data at item 0 of each stack base
+                # add one to account for the internal data at item 0 of each stack base
+                return "(memory[stack_ptrs[$stack_id]] + " + str(v['offset'] + 1) + ")"
         
         for v in self.arguments:
             if v['name'] == var_name:
-                return v['offset']
+                return "(memory[stack_ptrs[$stack_id]] + " + str(v['offset']) + ")"
+        
+        for v in self.sprite_ctx.static_variables.values():
+            if v['name'] == var_name:
+                return v['location']
     
     ## Get offset of variable optimized to not be on the stack.
     def get_variable_id(self, var_name):
@@ -366,6 +369,10 @@ class FunctionContext:
                 return v['id']
         
         for v in self.arguments:
+            if v['name'] == var_name:
+                return v['id']
+        
+        for v in self.sprite_ctx.static_variables.values():
             if v['name'] == var_name:
                 return v['id']
 
@@ -438,8 +445,7 @@ def generate_expression(ctx, expr, stack, prefer_lvalue=False):
         if var_id != None:
             return var_id
         else:
-            offset = ctx.get_variable_offset(expr.id)
-            memloc = f"memory[stack_ptrs[$stack_id]] + ({offset})"
+            memloc = ctx.get_variable_location(expr.id)
             return ExpressionLvalue(memloc) if prefer_lvalue else ExpressionLvalue(memloc).value
     
     elif expr.op == 'func_call':
@@ -501,7 +507,7 @@ def generate_expression(ctx, expr, stack, prefer_lvalue=False):
         if var_id != None:
             var_value = var_id
         else:
-            var_value = macro_get_from_stack_base(ctx.get_variable_offset(expr.id))
+            var_value = f"memory[{(ctx.get_variable_location(expr.id))}]"
         
         return f"memory[{var_value} + {value}]"
 
@@ -659,9 +665,9 @@ def generate_statement(ctx, statement, scope):
                     file.write(f"{var_id} = {expr};\n")
 
         else:
-            var_offset = ctx.get_variable_offset(var_name)
+            var_loc = ctx.get_variable_location(var_name)
 
-            assignment = get_assignment_location(ctx, f"(memory[stack_ptrs[$stack_id]] + ({(var_offset)}))", expr_stack, statement['assignment'])
+            assignment = get_assignment_location(ctx, var_loc, expr_stack, statement['assignment'])
 
             location = assignment[0]
             assign_type = assignment[1]
@@ -847,8 +853,64 @@ def check_if_recursive(functions, func, name):
     
     return False
         
+# static memory initialization
+def static_memory_init(ctx, stage_ctx):
+    file = ctx.file
+    program = ctx.program
 
-def generate_program(program, file, is_stage):
+    # get size required to store static variables
+    static_alloc_size = 0
+    for var_name in program['static_order']:
+        static_var = program['variables'][var_name]
+        if static_var['metadata']['needs_ref']:
+            static_alloc_size += static_var['type'].size()
+    
+    file.write("on \"nanoinit\" {\n")
+
+    # allocate space for static variables
+    if static_alloc_size > 0:
+        file.write(f"nano_malloc {gs_literal(static_alloc_size)};\n")
+        file.write(f"{(ctx.staticalloc)} = nano_malloc_return;\n")
+    else:
+        file.write(f"{(ctx.staticalloc)} = 0;\n")
+
+    # initialize static variables
+    static_variables = ctx.static_variables
+    static_offset = 0
+
+    if stage_ctx:
+        for var_name in stage_ctx.static_variables:
+            static_variables[var_name] = stage_ctx.static_variables[var_name]
+    
+    for var_name in program['static_order']:
+        static_var = program['variables'][var_name]
+
+        if static_var['metadata']['needs_ref']:
+            file.write(f"memory[{(ctx.staticalloc)} + {static_offset}] = {gs_literal(static_var['init'])};\n")
+
+            var_size = static_var['type'].size()
+            static_variables[var_name] = {
+                'name': var_name,
+                'size': var_size,
+                'location': f"({(ctx.staticalloc)} + {static_offset})",
+                'id': None,
+            }
+            static_offset += var_size
+        
+        else:
+            var_id = ctx.new_var_id() + "_" + var_name
+            file.write(f"{var_id} = {gs_literal(static_var['init'])};\n")
+
+            static_variables[var_name] = {
+                'name': var_name,
+                'size': 1,
+                'location': None,
+                'id': var_id
+            }
+
+    file.write("}\n\n")
+
+def generate_program(program, file, stage=None):
     sprite_ctx = SpriteContext(program, file)
 
     for costume_name in program['costumes']:
@@ -857,10 +919,16 @@ def generate_program(program, file, is_stage):
     for costume_name in program['sounds']:
         file.write(f"sounds {gs_literal(costume_name)};\n")
     
-    if is_stage:
+    if stage == None:
+        sprite_ctx.staticalloc = "nano_stagestaticalloc"
         file.write(stage_boilerplate + "\n")
+    else:
+        sprite_ctx.staticalloc = "nano_staticalloc"
         
     file.write(program_boilerplate + "\n")
+
+    # static variable initialization
+    static_memory_init(sprite_ctx, stage)
 
     for func in program['functions'].values():
         func_ctx = FunctionContext(sprite_ctx, func.parameters, func.type)
@@ -919,3 +987,6 @@ def generate_program(program, file, is_stage):
             raise Exception(f"internal: invalid event {event_name}")
         
         file.write(" {\nnano_alloc_stack;\n" + block_name + " init_stack_ret;\n}\n")
+    
+    sprite_ctx.file = None
+    return sprite_ctx
