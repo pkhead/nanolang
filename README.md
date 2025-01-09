@@ -16,7 +16,7 @@ unimplemented:
 
 plans for a nanolang rewrite:
 - make the language resemble C more (braces, semicolons, etc), i think this current design is a bit weird maybe
-- make generated code be single-threaded and warp-only, solving issues with maintaining stacks.
+- make generated code be single-threaded, solving issues with maintaining stacks.
 - unique sprite/clone api to work around the single-threaded limitation. demonstrative C code:
 ```
 sprite_t *sprite = sprite_create();
